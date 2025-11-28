@@ -1,0 +1,299 @@
+[
+  {
+    "sid": "/preface",
+    "title": "Preface",
+    "level": 1,
+    "children": []
+  },
+  {
+    "sid": "/introduction",
+    "title": "Introduction",
+    "level": 1,
+    "children": []
+  },
+  {
+    "sid": "/magnetic-fields--hysteresis",
+    "title": "Magnetic Fields & Hysteresis",
+    "level": 1,
+    "children": [
+      {
+        "sid": "/the-excitation-field",
+        "title": "The Excitation Field",
+        "level": 2,
+        "parent": "/magnetic-fields--hysteresis",
+        "children": []
+      },
+      {
+        "sid": "/flux-density--permeability",
+        "title": "Flux Density & Permeability",
+        "level": 2,
+        "parent": "/magnetic-fields--hysteresis",
+        "children": []
+      },
+      {
+        "sid": "/coercivity",
+        "title": "Coercivity",
+        "level": 2,
+        "parent": "/magnetic-fields--hysteresis",
+        "children": []
+      },
+      {
+        "sid": "/saturation",
+        "title": "Saturation",
+        "level": 2,
+        "parent": "/magnetic-fields--hysteresis",
+        "children": []
+      },
+      {
+        "sid": "/remanence",
+        "title": "Remanence",
+        "level": 2,
+        "parent": "/magnetic-fields--hysteresis",
+        "children": []
+      },
+      {
+        "sid": "/relative-coercivity",
+        "title": "Relative Coercivity",
+        "level": 2,
+        "parent": "/magnetic-fields--hysteresis",
+        "children": []
+      }
+    ]
+  },
+  {
+    "sid": "/the-analog-tape-recording-process",
+    "title": "The Analog Tape Recording Process",
+    "level": 1,
+    "children": [
+      {
+        "sid": "/recording",
+        "title": "Recording",
+        "level": 2,
+        "parent": "/the-analog-tape-recording-process",
+        "children": []
+      },
+      {
+        "sid": "/tape-compression",
+        "title": "Tape Compression",
+        "level": 2,
+        "parent": "/the-analog-tape-recording-process",
+        "children": []
+      },
+      {
+        "sid": "/reproducing",
+        "title": "Reproducing",
+        "level": 2,
+        "parent": "/the-analog-tape-recording-process",
+        "children": []
+      },
+      {
+        "sid": "/high-frequency-response",
+        "title": "High Frequency Response",
+        "level": 2,
+        "parent": "/the-analog-tape-recording-process",
+        "children": []
+      },
+      {
+        "sid": "/low-frequency-response",
+        "title": "Low Frequency Response",
+        "level": 2,
+        "parent": "/the-analog-tape-recording-process",
+        "children": []
+      },
+      {
+        "sid": "/analog-tape-summary",
+        "title": "Analog Tape Summary",
+        "level": 2,
+        "parent": "/the-analog-tape-recording-process",
+        "children": []
+      }
+    ]
+  },
+  {
+    "sid": "/transformers",
+    "title": "Transformers",
+    "level": 1,
+    "children": [
+      {
+        "sid": "/audio-transformer-design",
+        "title": "Audio Transformer Design",
+        "level": 2,
+        "parent": "/transformers",
+        "children": []
+      },
+      {
+        "sid": "/current-tape-emulators",
+        "title": "Current Tape Emulators",
+        "level": 2,
+        "parent": "/transformers",
+        "children": []
+      }
+    ]
+  },
+  {
+    "sid": "/full-spectrum-magnetization",
+    "title": "Full Spectrum Magnetization",
+    "level": 1,
+    "children": [
+      {
+        "sid": "/magnetic-frequency-response",
+        "title": "Magnetic Frequency Response",
+        "level": 2,
+        "parent": "/full-spectrum-magnetization",
+        "children": []
+      },
+      {
+        "sid": "/ac-bias",
+        "title": "AC Bias",
+        "level": 2,
+        "parent": "/full-spectrum-magnetization",
+        "children": []
+      }
+    ]
+  },
+  {
+    "sid": "/measurements",
+    "title": "Measurements",
+    "level": 1,
+    "children": [
+      {
+        "sid": "/sensitivity",
+        "title": "Sensitivity",
+        "level": 2,
+        "parent": "/measurements",
+        "children": []
+      },
+      {
+        "sid": "/magnetic-compression",
+        "title": "Magnetic Compression",
+        "level": 2,
+        "parent": "/measurements",
+        "children": []
+      },
+      {
+        "sid": "/distortion",
+        "title": "Distortion",
+        "level": 2,
+        "parent": "/measurements",
+        "children": []
+      },
+      {
+        "sid": "/hysteresis-loops",
+        "title": "Hysteresis Loops",
+        "level": 2,
+        "parent": "/measurements",
+        "children": []
+      }
+    ]
+  },
+  {
+    "sid": "/conclusion",
+    "title": "Conclusion",
+    "level": 1,
+    "children": []
+  },
+  {
+    "sid": "/references",
+    "title": "References",
+    "level": 1,
+    "children": [
+      {
+        "sid": "/1-jay-mcknight-calculating-the-wavelength-response-of-the-magnetic-recording-and-reproducing-processes--a-his-torical-review-2017",
+        "title": "[1] Jay McKnight. Calculating the Wavelength Response of the Magnetic Recording and Reproducing Processes – a His‑ torical Review. 2017.",
+        "level": 2,
+        "parent": "/references",
+        "children": []
+      },
+      {
+        "sid": "/2-jay-mcknight-some-popular-misconceptions-about-magnetic-recording-history-and-theory-2012",
+        "title": "[2] Jay McKnight. Some Popular Misconceptions About Magnetic Recording History and Theory. 2012.",
+        "level": 2,
+        "parent": "/references",
+        "children": []
+      },
+      {
+        "sid": "/3-charles-e-lowman-magnetic-recording-mcgrawhill-inc-1972",
+        "title": "[3] Charles E. Lowman. Magnetic Recording. McGraw‑Hill Inc., 1972.",
+        "level": 2,
+        "parent": "/references",
+        "children": []
+      },
+      {
+        "sid": "/4-delos-a-eilers-3m-audio-open-reel-tapes-in-si-units-2010",
+        "title": "[4] Delos A. Eilers. 3M Audio Open Reel Tapes, in SI Units. 2010.",
+        "level": 2,
+        "parent": "/references",
+        "children": []
+      },
+      {
+        "sid": "/5-david-r-mills-the-new-generation-of-high-energy-recording-tape-in-recording-engineer-producer-magazine-56-1974",
+        "title": "[5] David R. Mills. “THE NEW GENERATION OF HIGH ENERGY RECORDING TAPE”. In: Recording Engineer Producer Magazine 5.6 (1974).",
+        "level": 2,
+        "parent": "/references",
+        "children": []
+      },
+      {
+        "sid": "/6-fairrite-products-corp-61-material-data-sheet-url-httpsfair-ritecom61-material-data-sheet",
+        "title": "[6] Fair‑Rite Products Corp. 61 Material Data Sheet. url: https://fair-rite.com/61-material-data-sheet/.",
+        "level": 2,
+        "parent": "/references",
+        "children": []
+      },
+      {
+        "sid": "/7-stan-zurek-qualitative-analysis-of-px-and-py-components-of-rotational-power-loss-in-ieee-transactions-on-magnetics-2014",
+        "title": "[7] Stan Zurek. “Qualitative analysis of Px and Py components of rotational power loss”. In: IEEE Transactions on Magnetics (2014).",
+        "level": 2,
+        "parent": "/references",
+        "children": []
+      },
+      {
+        "sid": "/8-ampex-engineering-department-basic-concepts-of-magnetic-tape-recording-tech-rep-ampex-corporation-1960",
+        "title": "[8] Ampex Engineering Department. Basic Concepts of Magnetic Tape Recording. Tech. rep. Ampex Corporation, 1960.",
+        "level": 2,
+        "parent": "/references",
+        "children": []
+      },
+      {
+        "sid": "/9-john-g-mcknight-biasing-in-magnetic-tape-recording-in-electronics-world-1967",
+        "title": "[9] John G. McKnight. “BIASING IN MAGNETIC TAPE RECORDING”. In: Electronics World (1967).",
+        "level": 2,
+        "parent": "/references",
+        "children": []
+      },
+      {
+        "sid": "/10-j-selmer-jensen-and-sk-pramanik-dynamic-bias-control-with-hx-professional-1984",
+        "title": "[10] J. Selmer Jensen and S.K. Pramanik. DYNAMIC BIAS CONTROL WITH HX PROFESSIONAL. 1984.",
+        "level": 2,
+        "parent": "/references",
+        "children": []
+      },
+      {
+        "sid": "/11-neal-bertram-wavelength-response-in-ac-biased-recording-in-ieee-transactions-on-magnetics-1975",
+        "title": "[11] Neal Bertram. “Wavelength Response in AC Biased Recording”. In: IEEE Transactions on Magnetics (1975),",
+        "level": 2,
+        "parent": "/references",
+        "children": []
+      },
+      {
+        "sid": "/12-jack-endino-the-unpredictable-joys-of-analog-recording-2000-url-httpswwwendinocomgraphs",
+        "title": "[12] Jack Endino. The Unpredictable Joys of Analog Recording. 2000. url: https://www.endino.com/graphs/.",
+        "level": 2,
+        "parent": "/references",
+        "children": []
+      },
+      {
+        "sid": "/13-bill-whitlock-handbook-for-sound-engineers-3rd-edition-ed-by-glen-m-ballou-focal-press-2001-chap-audio-transformers",
+        "title": "[13] Bill Whitlock. Handbook For Sound Engineers 3rd Edition. Ed. by Glen M. Ballou. Focal Press, 2001. Chap. Audio Transformers.",
+        "level": 2,
+        "parent": "/references",
+        "children": []
+      }
+    ]
+  },
+  {
+    "sid": "/revision-history",
+    "title": "REVISION HISTORY",
+    "level": 1,
+    "children": []
+  }
+]
