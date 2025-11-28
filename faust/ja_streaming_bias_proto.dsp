@@ -17,7 +17,7 @@ drive_gain  = drive_db : si.smoo : ba.db2linear;
 
 bias_level      = hslider("Bias Level", 0.62, 0.0, 1.0, 0.01) : si.smoo;
 bias_scale      = hslider("Bias Scale", 11.0, 1.0, 100.0, 0.1) : si.smoo;
-bias_resolution = hslider("Bias Resolution [K32|K48|K60]", 2.0, 0.0, 2.0, 1.0);
+bias_resolution = nentry("Bias Resolution [style:menu{'K32':0;'K48':1;'K60':2}]", 2, 0, 2, 1);
 
 mix = hslider("Mix [Dry->Wet]", 1.0, 0.0, 1.0, 0.01) : si.smoo;
 

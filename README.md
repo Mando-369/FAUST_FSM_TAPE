@@ -59,7 +59,7 @@ cd faust
 
 First build creates the project with `faust2juce`. Subsequent builds preserve plugin IDs.
 
-Flags: `-double` (64-bit precision), `-ftz 2` (flush denormals)
+Flags: `-double` (64-bit precision)
 
 ### C++ Plugin
 

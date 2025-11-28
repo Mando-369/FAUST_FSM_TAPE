@@ -16,7 +16,7 @@ if [ -d "$PROJECT_DIR" ] && [ -f "$JUCER_FILE" ]; then
     echo "=== Regenerating C++ only (preserving .jucer) ==="
 
     # Generate new C++ code using faust directly with JUCE architecture
-    faust -double -ftz 2 -a "$JUCE_ARCH" -cn mydsp "$DSP_FILE" -o "$PROJECT_DIR/FaustPluginProcessor.cpp"
+    faust -double -a "$JUCE_ARCH" -cn mydsp "$DSP_FILE" -o "$PROJECT_DIR/FaustPluginProcessor.cpp"
 
     # Add missing FAUST_INPUTS/OUTPUTS defines (stereo)
     sed -i '' '/#define FAUSTCLASS mydsp/a\
@@ -36,7 +36,7 @@ if [ -d "$PROJECT_DIR" ] && [ -f "$JUCER_FILE" ]; then
     echo "=== Done ==="
 else
     echo "=== Project doesn't exist, creating fresh ==="
-    faust2juce -jucemodulesdir ../../JUCE/modules -osc -double -ftz 2 "$DSP_FILE"
+    faust2juce -jucemodulesdir ../../JUCE/modules -osc -double "$DSP_FILE"
     echo "✓ Project created"
     echo "IMPORTANT: Note the plugin IDs in .jucer for future reference!"
     grep -E "pluginCode|bundleIdentifier" "$JUCER_FILE"
