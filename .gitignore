@@ -21,6 +21,10 @@ JUCE/
 # FAUST generated
 faust/**/ja_streaming_bias_proto/
 
+# JUCE generated (Projucer)
+juce_plugin/Builds/
+juce_plugin/JuceLibraryCode/
+
 # Compiled objects
 *.o
 *.a

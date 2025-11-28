@@ -8,22 +8,22 @@ JAHysteresisProcessor::JAHysteresisProcessor()
     // Parameters matching FAUST prototype exactly
     addParameter(inputGainParam = new juce::AudioParameterFloat(
         "input_gain", "Input Gain",
-        juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f,
+        juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), -7.0f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
 
     addParameter(outputGainParam = new juce::AudioParameterFloat(
         "output_gain", "Output Gain",
-        juce::NormalisableRange<float>(-24.0f, 48.0f, 0.1f), 34.0f,
+        juce::NormalisableRange<float>(-24.0f, 48.0f, 0.1f), 40.0f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
 
     addParameter(driveParam = new juce::AudioParameterFloat(
         "drive", "Drive",
-        juce::NormalisableRange<float>(-18.0f, 18.0f, 0.1f), -10.0f,
+        juce::NormalisableRange<float>(-18.0f, 18.0f, 0.1f), -13.0f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
 
     addParameter(biasLevelParam = new juce::AudioParameterFloat(
         "bias_level", "Bias Level",
-        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.4f));
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.62f));
 
     addParameter(biasScaleParam = new juce::AudioParameterFloat(
         "bias_scale", "Bias Scale",
@@ -31,11 +31,7 @@ JAHysteresisProcessor::JAHysteresisProcessor()
 
     addParameter(modeParam = new juce::AudioParameterChoice(
         "mode", "Bias Resolution",
-        juce::StringArray{"K32", "K48", "K60"}, 1)); // Default K48
-
-    addParameter(biasRatioParam = new juce::AudioParameterFloat(
-        "bias_ratio", "Bias Ratio",
-        juce::NormalisableRange<float>(0.98f, 1.02f, 0.001f), 1.0f));
+        juce::StringArray{"K32", "K48", "K60"}, 2)); // Default K60
 
     addParameter(mixParam = new juce::AudioParameterFloat(
         "mix", "Mix",
@@ -71,10 +67,16 @@ void JAHysteresisProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     schedulerL.setBiasControls(biasLevelParam->get(), biasScaleParam->get());
     schedulerR.setBiasControls(biasLevelParam->get(), biasScaleParam->get());
 
-    // DC blocker at 10 Hz (matching FAUST fi.dcblockerat(10))
-    auto dcCoeffs = juce::dsp::IIR::Coefficients<double>::makeHighPass(sampleRate, 10.0);
-    dcBlockerL.coefficients = dcCoeffs;
-    dcBlockerR.coefficients = dcCoeffs;
+    // DC blocker: SVF TPT highpass at 10 Hz, Butterworth Q (matching FAUST fi.SVFTPT.HP2)
+    juce::dsp::ProcessSpec spec { sampleRate, static_cast<juce::uint32>(samplesPerBlock), 1 };
+    dcBlockerL.prepare(spec);
+    dcBlockerR.prepare(spec);
+    dcBlockerL.setType(juce::dsp::StateVariableTPTFilterType::highpass);
+    dcBlockerR.setType(juce::dsp::StateVariableTPTFilterType::highpass);
+    dcBlockerL.setCutoffFrequency(10.0);
+    dcBlockerR.setCutoffFrequency(10.0);
+    dcBlockerL.setResonance(0.7071);  // 1/sqrt(2) for Butterworth
+    dcBlockerR.setResonance(0.7071);
     dcBlockerL.reset();
     dcBlockerR.reset();
 
@@ -139,7 +141,7 @@ void JAHysteresisProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             wetL = schedulerL.process(wetL);
 
             // DC blocker
-            wetL = dcBlockerL.processSample(wetL);
+            wetL = dcBlockerL.processSample(0, wetL);
 
             // Output gain
             wetL *= outputGain;
@@ -155,7 +157,7 @@ void JAHysteresisProcessor::processBlock(juce::AudioBuffer<float>& buffer,
             double wetR = static_cast<double>(dryR * inputGain * drive);
 
             wetR = schedulerR.process(wetR);
-            wetR = dcBlockerR.processSample(wetR);
+            wetR = dcBlockerR.processSample(0, wetR);
             wetR *= outputGain;
 
             rightChannel[i] = static_cast<float>(dryR * (1.0f - mix) + wetR * mix);
@@ -178,7 +180,6 @@ void JAHysteresisProcessor::getStateInformation(juce::MemoryBlock& destData)
     state.setProperty("biasLevel", biasLevelParam->get(), nullptr);
     state.setProperty("biasScale", biasScaleParam->get(), nullptr);
     state.setProperty("mode", modeParam->getIndex(), nullptr);
-    state.setProperty("biasRatio", biasRatioParam->get(), nullptr);
     state.setProperty("mix", mixParam->get(), nullptr);
 
     juce::MemoryOutputStream stream(destData, false);
@@ -191,13 +192,12 @@ void JAHysteresisProcessor::setStateInformation(const void* data, int sizeInByte
 
     if (state.isValid())
     {
-        *inputGainParam = state.getProperty("inputGain", 0.0f);
-        *outputGainParam = state.getProperty("outputGain", 34.0f);
-        *driveParam = state.getProperty("drive", -10.0f);
-        *biasLevelParam = state.getProperty("biasLevel", 0.4f);
+        *inputGainParam = state.getProperty("inputGain", -7.0f);
+        *outputGainParam = state.getProperty("outputGain", 40.0f);
+        *driveParam = state.getProperty("drive", -13.0f);
+        *biasLevelParam = state.getProperty("biasLevel", 0.62f);
         *biasScaleParam = state.getProperty("biasScale", 11.0f);
-        *modeParam = state.getProperty("mode", 1);
-        *biasRatioParam = state.getProperty("biasRatio", 1.0f);
+        *modeParam = state.getProperty("mode", 2);
         *mixParam = state.getProperty("mix", 1.0f);
     }
 }

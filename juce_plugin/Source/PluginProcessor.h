@@ -1,7 +1,7 @@
 #pragma once
 
-#include <juce_audio_processors/juce_audio_processors.h>
-#include <juce_dsp/juce_dsp.h>
+// Include JUCE - works with both Projucer and CMake builds
+#include <JuceHeader.h>
 #include "JAHysteresisScheduler.h"
 
 /**
@@ -43,7 +43,6 @@ private:
     juce::AudioParameterFloat* biasLevelParam;
     juce::AudioParameterFloat* biasScaleParam;
     juce::AudioParameterChoice* modeParam;
-    juce::AudioParameterFloat* biasRatioParam;
     juce::AudioParameterFloat* mixParam;
 
     // Smoothed parameters
@@ -56,9 +55,9 @@ private:
     JAHysteresisScheduler schedulerL;
     JAHysteresisScheduler schedulerR;
 
-    // DC blocker
-    juce::dsp::IIR::Filter<double> dcBlockerL;
-    juce::dsp::IIR::Filter<double> dcBlockerR;
+    // DC blocker (SVF TPT highpass, matching FAUST fi.SVFTPT.HP2)
+    juce::dsp::StateVariableTPTFilter<double> dcBlockerL;
+    juce::dsp::StateVariableTPTFilter<double> dcBlockerR;
 
     // Helpers
     void updateSchedulerSettings();

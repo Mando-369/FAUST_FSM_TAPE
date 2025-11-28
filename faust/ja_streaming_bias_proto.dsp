@@ -10,15 +10,14 @@ c_reversibility = 0.18;
 alpha_coupling  = 0.015;
 
 // ===== User controls =====
-input_gain  = hslider("Input Gain [dB]", 0.0, -24.0, 24.0, 0.1) : ba.db2linear : si.smoo;
-output_gain = hslider("Output Gain [dB]", 34.0, -24.0, 48.0, 0.1) : ba.db2linear : si.smoo;
-drive_db    = hslider("Drive [dB]", -10.0, -18.0, 18.0, 0.1);
+input_gain  = hslider("Input Gain [dB]", -7.0, -24.0, 24.0, 0.1) : ba.db2linear : si.smoo;
+output_gain = hslider("Output Gain [dB]", 40.0, -24.0, 48.0, 0.1) : ba.db2linear : si.smoo;
+drive_db    = hslider("Drive [dB]", -13.0, -18.0, 18.0, 0.1);
 drive_gain  = drive_db : si.smoo : ba.db2linear;
 
-bias_level      = hslider("Bias Level", 0.4, 0.0, 1.0, 0.01) : si.smoo;
+bias_level      = hslider("Bias Level", 0.62, 0.0, 1.0, 0.01) : si.smoo;
 bias_scale      = hslider("Bias Scale", 11.0, 1.0, 100.0, 0.1) : si.smoo;
-bias_resolution = hslider("Bias Resolution [K32|K48|K60]", 1.0, 0.0, 2.0, 1.0);
-bias_ratio      = hslider("Bias Ratio", 1.0, 0.98, 1.02, 0.001) : si.smoo;
+bias_resolution = hslider("Bias Resolution [K32|K48|K60]", 2.0, 0.0, 2.0, 1.0);
 
 mix = hslider("Mix [Dry->Wet]", 1.0, 0.0, 1.0, 0.01) : si.smoo;
 
@@ -37,15 +36,15 @@ inv_two_pi = 1.0 / two_pi;
 // K32 = 2 cycles, K48 = 3 cycles, K60 = 3 cycles
 phase_cycles_from_mode(res) = ba.if(res < 0.5, 2.0, 3.0);
 phase_cycles    = phase_cycles_from_mode(bias_resolution);
-bias_freq_base  = phase_cycles * ma.SR;
-bias_freq       = bias_freq_base * bias_ratio;
+bias_freq       = phase_cycles * ma.SR;
 
-// Running bias phase: integrate frequency, wrap to 2π, expose previous sample phase.
-phase_inc       = two_pi * bias_freq / ma.SR;
-phi_unwrapped   = phase_inc : (+ ~ _);
-phi_wrapped     = two_pi * ma.frac(phi_unwrapped * inv_two_pi);
+// Running bias phase: wrap INSIDE feedback to prevent precision drift.
+// Accumulate in [0,1] range, convert to radians after.
+phase_inc_norm  = bias_freq / ma.SR;  // cycles per sample (normalized)
+phi_norm        = phase_inc_norm : (+ : ma.frac) ~ _;  // wrap inside feedback
+phi_wrapped     = phi_norm * two_pi;
 phi_start       = phi_wrapped @ 1;
-phase_span      = phase_inc;
+phase_span      = phase_inc_norm * two_pi;
 
 // Diagnostic: monitor effective cycles per audio sample
 bias_cycles_per_sample = bias_freq / ma.SR;
@@ -97,90 +96,109 @@ with {
   };
 };
 
-// ===== Sin/cos recurrence =====
-ja_step_sc(M_prev, H_prev, H_audio, M_sum_prev, s, c, sD, cD) =
-  M_sum_next, M_new, H_new, H_audio, s_next, c_next, sD, cD
+// ===== Substep with direct sin() call (matching C++ std::sin) =====
+// Output order matches input order for correct chaining:
+// Inputs:  (M_prev, H_prev, H_audio, M_sum_prev, phi, dphi)
+// Outputs: (M_new,  H_new,  H_audio, M_sum_new,  phi_next, dphi)
+ja_substep_with_phase(M_prev, H_prev, H_audio, M_sum_prev, phi, dphi) =
+  M_new, H_new, H_audio, M_sum_new, phi_next, dphi
 with {
-  ja_result  = (M_prev, H_prev, H_audio, M_sum_prev) : ja_substep(s);
-  M_sum_next = ba.selector(0, 4, ja_result);
-  M_new      = ba.selector(1, 4, ja_result);
-  H_new      = ba.selector(2, 4, ja_result);
-
-  s_next = s * cD + c * sD;
-  c_next = c * cD - s * sD;
+  bias_offset = sin(phi + 0.5 * dphi);  // midpoint sampling
+  ja_out      = (M_prev, H_prev, H_audio, M_sum_prev) : ja_substep(bias_offset);
+  M_sum_new   = ba.selector(0, 4, ja_out);
+  M_new       = ba.selector(1, 4, ja_out);
+  H_new       = ba.selector(2, 4, ja_out);
+  phi_next    = phi + dphi;
 };
 
 // ===== Loop helpers (matching C++ Normal quality substep counts) =====
 
 // K32: 36 substeps (2 cycles × 18 points/cycle)
+// Final outputs: (M_new, H_new, M_sum) at indices (0, 1, 3)
 ja_loop36(M_prev, H_prev, H_audio, phi_b, dphi_) =
-  M_prev, H_prev, H_audio, 0.0,
-  s0, c0, sD, cD
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  <: ba.selector(0, 8), ba.selector(1, 8), ba.selector(2, 8)
+  M_prev, H_prev, H_audio, 0.0, phi_b, D
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  <: ba.selector(0, 6), ba.selector(1, 6), ba.selector(3, 6)
 with {
-  N  = 36.0;
-  D  = dphi_ / N;
-  sD = sin(D);
-  cD = cos(D);
-  s0 = sin(phi_b + 0.5 * D);
-  c0 = cos(phi_b + 0.5 * D);
+  N = 36.0;
+  D = dphi_ / N;
 };
 
 // K48: 54 substeps (3 cycles × 18 points/cycle)
+// Final outputs: (M_new, H_new, M_sum) at indices (0, 1, 3)
 ja_loop54(M_prev, H_prev, H_audio, phi_b, dphi_) =
-  M_prev, H_prev, H_audio, 0.0,
-  s0, c0, sD, cD
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  <: ba.selector(0, 8), ba.selector(1, 8), ba.selector(2, 8)
+  M_prev, H_prev, H_audio, 0.0, phi_b, D
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  <: ba.selector(0, 6), ba.selector(1, 6), ba.selector(3, 6)
 with {
-  N  = 54.0;
-  D  = dphi_ / N;
-  sD = sin(D);
-  cD = cos(D);
-  s0 = sin(phi_b + 0.5 * D);
-  c0 = cos(phi_b + 0.5 * D);
+  N = 54.0;
+  D = dphi_ / N;
 };
 
 // K60: 66 substeps (3 cycles × 22 points/cycle)
+// Output order: M_new, H_new, M_sum (for correct feedback via ~ operator)
 ja_loop66(M_prev, H_prev, H_audio, phi_b, dphi_) =
-  M_prev, H_prev, H_audio, 0.0,
-  s0, c0, sD, cD
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc : ja_step_sc
-  <: ba.selector(0, 8), ba.selector(1, 8), ba.selector(2, 8)
+  M_prev, H_prev, H_audio, 0.0, phi_b, D
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  : ja_substep_with_phase : ja_substep_with_phase : ja_substep_with_phase
+  <: ba.selector(0, 6), ba.selector(1, 6), ba.selector(3, 6)
 with {
-  N  = 66.0;
-  D  = dphi_ / N;
-  sD = sin(D);
-  cD = cos(D);
-  s0 = sin(phi_b + 0.5 * D);
-  c0 = cos(phi_b + 0.5 * D);
+  N = 66.0;
+  D = dphi_ / N;
 };
 
 // ===== Streaming JA hysteresis =====
+// Output order from ja_loopXX is (M_new, H_new, M_sum) at indices (0, 1, 3)
+// Feedback via ~ takes first 2 outputs: M_new -> recM, H_new -> recH (correct!)
+// Final output is M_sum at index 2 of the 3-output tuple
 ja_hysteresis(H_in) =
   ba.if(bias_resolution < 0.5,
     loopK32(H_in),
@@ -189,21 +207,21 @@ ja_hysteresis(H_in) =
       loopK60(H_in)))
 with {
   loopK32(H) = (loop ~ (mem, mem))
-    : ba.selector(0, 3)
+    : ba.selector(2, 3)    // M_sum is now at index 2
     : *(inv_36)
   with {
     loop(recM, recH) = recM, recH, H, phi_start, phase_span : ja_loop36;
   };
 
   loopK48(H) = (loop ~ (mem, mem))
-    : ba.selector(0, 3)
+    : ba.selector(2, 3)    // M_sum is now at index 2
     : *(inv_54)
   with {
     loop(recM, recH) = recM, recH, H, phi_start, phase_span : ja_loop54;
   };
 
   loopK60(H) = (loop ~ (mem, mem))
-    : ba.selector(0, 3)
+    : ba.selector(2, 3)    // M_sum is now at index 2
     : *(inv_66)
   with {
     loop(recM, recH) = recM, recH, H, phi_start, phase_span : ja_loop66;
@@ -211,11 +229,14 @@ with {
 };
 
 // ===== Prototype tape stage (no limiter/clipper) =====
+// DC blocker: 2nd-order SVF TPT highpass at 10 Hz, Butterworth Q
+dc_blocker = fi.SVFTPT.HP2(10.0, 0.7071);
+
 tape_stage(x) =
   x * input_gain
   : *(drive_gain)
   : ja_hysteresis
-  : fi.dcblockerat(10);
+  : dc_blocker;
 
 wet_gained = tape_stage : *(output_gain);
 

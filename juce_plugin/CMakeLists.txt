@@ -4,8 +4,8 @@ project(JA_Hysteresis_CPP VERSION 1.0.0)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Add JUCE
-add_subdirectory(JUCE)
+# Add JUCE (from repo root)
+add_subdirectory(../JUCE JUCE_build)
 
 # Plugin target
 juce_add_plugin(JA_Hysteresis_CPP
@@ -20,6 +20,9 @@ juce_add_plugin(JA_Hysteresis_CPP
     IS_MIDI_EFFECT FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE
 )
+
+# Generate JuceHeader.h for compatibility with Projucer builds
+juce_generate_juce_header(JA_Hysteresis_CPP)
 
 target_sources(JA_Hysteresis_CPP
     PRIVATE
