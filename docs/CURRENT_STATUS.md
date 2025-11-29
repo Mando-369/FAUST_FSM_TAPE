@@ -24,7 +24,7 @@ Create a reusable **FAUST library (`jahysteresis.lib`)** for Jiles-Atherton magn
 | JA physics model | Complete | Ms=320, a=720, k=280, c=0.18, α=0.015 |
 | Phase-locked bias oscillator | Complete | Fixed cycles/sample, sample-rate invariant |
 | 2D LUT optimization | Complete | 1 real substep + LUT lookup |
-| 10 bias modes (K28-K1920) | Complete | LoFi to beyond-physical range |
+| 10 bias modes (K28-K2101) | Complete | LoFi to beyond-physical range (all half-integer cycles) |
 | FAUST prototype | Complete | `dev/ja_streaming_bias_proto.dsp` |
 | FAUST library | In Progress | `jahysteresis.lib` (contribution-ready) |
 | C++ reference | Complete | `JAHysteresisScheduler` with ~11% CPU |
@@ -185,13 +185,16 @@ Key documentation reviewed:
 
 Goal: Map the K/bias parameter space to musical descriptors.
 
-| Mode | Substeps | Expected Character | Status |
-|------|----------|-------------------|--------|
-| K28 | 27 | Maximum grit, aliasing artifacts | Needs testing |
-| K32 | 36 | Crunchy, lo-fi | Needs testing |
-| K60 | 66 | Classic tape saturation | Baseline |
-| K120 | 132 | Clean, detailed | Needs testing |
-| K1920 | 2112 | Beyond physical, ultra-smooth | Needs testing |
+| Mode | Cycles | Substeps | Expected Character | Status |
+|------|--------|----------|-------------------|--------|
+| K28 | 1.5 | 27 | Maximum grit, aliasing artifacts | Rich harmonics |
+| K45 | 2.5 | 45 | Crunchy, lo-fi | Rich harmonics |
+| K63 | 3.5 | 63 | Classic tape saturation | Rich harmonics |
+| K99 | 4.5 | 99 | Warm, smooth | Rich harmonics |
+| K121 | 5.5 | 121 | Standard, balanced | Rich harmonics |
+| K2101 | 95.5 | 2101 | Beyond physical, ultra-smooth | Rich harmonics |
+
+**Key insight**: All modes now use half-integer cycles + odd substeps, ensuring opposite bias polarity between adjacent samples. This introduces even harmonics for warmer, more musical tone.
 
 **Hypothesis**: Lower substep counts introduce inter-sample aliasing that manifests as characteristic harmonics. This is a "feature" for lo-fi modes but should be minimized for high-quality modes.
 
@@ -221,7 +224,7 @@ Current: Pure sine bias oscillator.
 FAUST_FSM_TAPE/
 ├── faust/
 │   ├── jahysteresis.lib              # Contribution-ready FAUST library (jah prefix)
-│   ├── ja_lut_k*.lib                 # 10 mode-specific LUT libraries (K28-K1920)
+│   ├── ja_lut_k*.lib                 # 10 mode-specific LUT libraries (K28-K2101)
 │   ├── rebuild_faust.sh              # Build script preserving plugin IDs
 │   ├── dev/
 │   │   └── ja_streaming_bias_proto.dsp   # Working prototype (reference)

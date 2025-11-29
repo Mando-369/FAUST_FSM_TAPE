@@ -43,19 +43,22 @@ class ModeConfig(NamedTuple):
         return 2.0 * np.pi * self.cycles_per_sample
 
 
-# Mode configurations (Normal quality)
+# Mode configurations
+# Pattern: half-integer cycles + odd substeps = rich harmonic content
+# This ensures opposite bias polarity between adjacent samples
 MODES = {
+    # Low-res group (18 steps/cycle) - lofi character
     'K28': ModeConfig('K28', 1.5, 18),      # 27 substeps (ultra lofi)
-    'K32': ModeConfig('K32', 2.0, 18),      # 36 substeps (lofi)
-    'K48': ModeConfig('K48', 3.0, 18),      # 54 substeps
-    'K60': ModeConfig('K60', 3.0, 22),      # 66 substeps (vintage)
-    'K90': ModeConfig('K90', 4.5, 22),      # 99 substeps (warm)
-    'K120': ModeConfig('K120', 6.0, 22),    # 132 substeps (standard)
-    'K180': ModeConfig('K180', 9.0, 22),    # 198 substeps (high quality)
-    'K240': ModeConfig('K240', 12.0, 22),   # 264 substeps
-    'K480': ModeConfig('K480', 24.0, 22),   # 528 substeps
-    'K960': ModeConfig('K960', 48.0, 22),   # 1056 substeps
-    'K1920': ModeConfig('K1920', 96.0, 22), # 2112 substeps (beyond physical)
+    'K45': ModeConfig('K45', 2.5, 18),      # 45 substeps (lofi)
+    'K63': ModeConfig('K63', 3.5, 18),      # 63 substeps (vintage)
+    # High-res group (22 steps/cycle) - cleaner character
+    'K99': ModeConfig('K99', 4.5, 22),      # 99 substeps (warm)
+    'K121': ModeConfig('K121', 5.5, 22),    # 121 substeps (standard)
+    'K187': ModeConfig('K187', 8.5, 22),    # 187 substeps (high quality)
+    'K253': ModeConfig('K253', 11.5, 22),   # 253 substeps (detailed)
+    'K495': ModeConfig('K495', 22.5, 22),   # 495 substeps (ultra detailed)
+    'K1045': ModeConfig('K1045', 47.5, 22), # 1045 substeps (extreme)
+    'K2101': ModeConfig('K2101', 95.5, 22), # 2101 substeps (beyond physical)
 }
 
 
@@ -384,8 +387,8 @@ def export_faust_lib(
 
 def main():
     parser = argparse.ArgumentParser(description='Generate JA Hysteresis 2D LUT')
-    parser.add_argument('--mode', choices=['K28', 'K32', 'K48', 'K60', 'K90', 'K120', 'K180', 'K240', 'K480', 'K960', 'K1920'], default='K60',
-                        help='Bias mode (default: K60)')
+    parser.add_argument('--mode', choices=list(MODES.keys()), default='K121',
+                        help='Bias mode (default: K121)')
     parser.add_argument('--m-size', type=int, default=65,
                         help='M grid size (default: 65)')
     parser.add_argument('--h-size', type=int, default=129,

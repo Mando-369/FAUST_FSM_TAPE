@@ -16,28 +16,31 @@ The FAUST implementation now uses a **2D LUT optimization** that reduces CPU fro
 
 - **Key insight**: Only substep 0 has cross-sample dependency; substeps 1..N-1 are deterministic given (M1, H_audio)
 - **Solution**: 1 real JA substep + 2D LUT lookup for the remainder
-- **Result**: Can run K1920 (2112 substeps) at same cost as original K60 (66 substeps)
+- **Result**: Can run K2101 (2101 substeps) at same cost as original K63 (63 substeps)
 
 ### Available Modes (10-step control)
+
+All modes use **half-integer cycles + odd substeps** for rich harmonic content.
+This ensures opposite bias polarity between adjacent samples, introducing even harmonics.
 
 | # | Mode | Cycles | Substeps | Character |
 |---|------|--------|----------|-----------|
 | 0 | K28 Ultra LoFi | 1.5 | 27 | Maximum grit |
-| 1 | K32 LoFi | 2 | 36 | Crunchy |
-| 2 | K60 Vintage | 3 | 66 | Classic tape |
-| 3 | K90 Warm | 4.5 | 99 | Smooth warmth |
-| 4 | K120 Standard | 6 | 132 | **Default** |
-| 5 | K180 HQ | 9 | 198 | High quality |
-| 6 | K240 | 12 | 264 | Very detailed |
-| 7 | K480 | 24 | 528 | Ultra detailed |
-| 8 | K960 | 48 | 1056 | Extreme |
-| 9 | K1920 Beyond | 96 | 2112 | Beyond physical |
+| 1 | K45 LoFi | 2.5 | 45 | Crunchy |
+| 2 | K63 Vintage | 3.5 | 63 | Classic tape |
+| 3 | K99 Warm | 4.5 | 99 | Smooth warmth |
+| 4 | K121 Standard | 5.5 | 121 | **Default** |
+| 5 | K187 HQ | 8.5 | 187 | High quality |
+| 6 | K253 Detailed | 11.5 | 253 | Very detailed |
+| 7 | K495 Ultra | 22.5 | 495 | Ultra detailed |
+| 8 | K1045 Extreme | 47.5 | 1045 | Extreme |
+| 9 | K2101 Beyond | 95.5 | 2101 | Beyond physical |
 
 ### LUT Generation
 
 ```bash
 cd scripts
-python3 generate_ja_lut.py --mode K960 --bias-level 0.41 --output-dir ../faust
+python3 generate_ja_lut.py --mode K121 --bias-level 0.41 --output-dir ../faust
 ```
 
 LUTs are precomputed for `bias_level=0.41, bias_scale=11.0`.
@@ -66,7 +69,7 @@ git clone --depth 1 https://github.com/juce-framework/JUCE.git
 cd faust && ./rebuild_faust.sh
 
 # Generate new LUT
-cd scripts && python3 generate_ja_lut.py --mode K960 --bias-level 0.41 --output-dir ../faust
+cd scripts && python3 generate_ja_lut.py --mode K121 --bias-level 0.41 --output-dir ../faust
 
 # Build C++ (Projucer)
 # Open juce_plugin/JA_Hysteresis_CPP.jucer, save, build from Xcode
