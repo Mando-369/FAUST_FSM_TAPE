@@ -228,14 +228,16 @@ with {
 
 // ===== Prototype tape stage =====
 dc_blocker = fi.SVFTPT.HP2(10.0, 0.7071);
+drive_comp = 1.0 / drive_gain;  // Compensate: +6dB drive → -6dB output
 
 tape_stage(x) =
   x * input_gain
   : *(drive_gain)
   : ja_hysteresis
-  : dc_blocker;
+  : dc_blocker
+  : *(drive_comp);
 
 wet_gained = tape_stage : *(output_gain);
 tape_channel = ef.dryWetMixer(mix, wet_gained);
 
-process = tape_channel, tape_channel;
+process = par(i, 2, tape_channel);
