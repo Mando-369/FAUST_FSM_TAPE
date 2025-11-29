@@ -8,22 +8,22 @@ JAHysteresisProcessor::JAHysteresisProcessor()
     // Parameters matching FAUST prototype exactly
     addParameter(inputGainParam = new juce::AudioParameterFloat(
         "input_gain", "Input Gain",
-        juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), -7.0f,
+        juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
 
     addParameter(outputGainParam = new juce::AudioParameterFloat(
         "output_gain", "Output Gain",
-        juce::NormalisableRange<float>(-24.0f, 48.0f, 0.1f), 40.0f,
+        juce::NormalisableRange<float>(-24.0f, 48.0f, 0.1f), 15.9f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
 
     addParameter(driveParam = new juce::AudioParameterFloat(
         "drive", "Drive",
-        juce::NormalisableRange<float>(-18.0f, 18.0f, 0.1f), -13.0f,
+        juce::NormalisableRange<float>(-18.0f, 18.0f, 0.1f), 0.0f,
         juce::AudioParameterFloatAttributes().withLabel("dB")));
 
     addParameter(biasLevelParam = new juce::AudioParameterFloat(
         "bias_level", "Bias Level",
-        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.62f));
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.41f));
 
     addParameter(biasScaleParam = new juce::AudioParameterFloat(
         "bias_scale", "Bias Scale",
@@ -192,10 +192,10 @@ void JAHysteresisProcessor::setStateInformation(const void* data, int sizeInByte
 
     if (state.isValid())
     {
-        *inputGainParam = state.getProperty("inputGain", -7.0f);
-        *outputGainParam = state.getProperty("outputGain", 40.0f);
-        *driveParam = state.getProperty("drive", -13.0f);
-        *biasLevelParam = state.getProperty("biasLevel", 0.62f);
+        *inputGainParam = state.getProperty("inputGain", 0.0f);
+        *outputGainParam = state.getProperty("outputGain", 15.9f);
+        *driveParam = state.getProperty("drive", 0.0f);
+        *biasLevelParam = state.getProperty("biasLevel", 0.41f);
         *biasScaleParam = state.getProperty("biasScale", 11.0f);
         *modeParam = state.getProperty("mode", 2);
         *mixParam = state.getProperty("mix", 1.0f);
