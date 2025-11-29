@@ -1,0 +1,36 @@
+// Common helpers for JA LUT bilinear interpolation
+
+// Compute flattened index into a (m_size x h_size) table
+ja_lut_idx(h_size, m_idx, h_idx) = m_idx * h_size + h_idx;
+
+// Normalize a value into [0, 1]
+ja_lut_norm(v, v_min, v_max) = (v - v_min) / (v_max - v_min);
+
+// Bilinear lookup on a 2D LUT with clamping at the borders
+ja_lut_bilinear(table, m_min, m_max, h_min, h_max, m_size, h_size, m, h) = result
+with {
+    m_n = max(0.0, min(1.0, ja_lut_norm(m, m_min, m_max)));
+    h_n = max(0.0, min(1.0, ja_lut_norm(h, h_min, h_max)));
+    
+    m_scaled = m_n * (m_size - 1);
+    h_scaled = h_n * (h_size - 1);
+    
+    m_idx = int(floor(m_scaled));
+    h_idx = int(floor(h_scaled));
+    
+    m_frac = m_scaled - float(m_idx);
+    h_frac = h_scaled - float(h_idx);
+    
+    m_idx_safe = min(m_idx, m_size - 2);
+    h_idx_safe = min(h_idx, h_size - 2);
+    
+    v00 = table, ja_lut_idx(h_size, m_idx_safe, h_idx_safe) : rdtable;
+    v01 = table, ja_lut_idx(h_size, m_idx_safe, h_idx_safe + 1) : rdtable;
+    v10 = table, ja_lut_idx(h_size, m_idx_safe + 1, h_idx_safe) : rdtable;
+    v11 = table, ja_lut_idx(h_size, m_idx_safe + 1, h_idx_safe + 1) : rdtable;
+    
+    result = v00 * (1.0 - m_frac) * (1.0 - h_frac) +
+             v01 * (1.0 - m_frac) * h_frac +
+             v10 * m_frac * (1.0 - h_frac) +
+             v11 * m_frac * h_frac;
+};

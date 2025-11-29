@@ -3,6 +3,7 @@
 // Substeps covered: 1..197
 
 import("stdfaust.lib");
+import("ja_lut_common.lib");
 
 // Grid parameters for K180
 ja_lut_k180_m_size = 65;
@@ -4212,69 +4213,17 @@ ja_lut_k180_sum_m_rest = waveform{
     2.8221576529e+01,    2.8711366359e+01,    2.9201534211e+01,    2.9692084781e+01,
     3.0183022727e+01};
 
-// 2D index computation
-ja_lut_k180_idx(m_idx, h_idx) = m_idx * ja_lut_k180_h_size + h_idx;
+// Bilinear interpolation lookups using shared helper
+ja_lookup_m_end_k180(m, h) = ja_lut_bilinear(
+    ja_lut_k180_m_end,
+    ja_lut_k180_m_min, ja_lut_k180_m_max,
+    ja_lut_k180_h_min, ja_lut_k180_h_max,
+    ja_lut_k180_m_size, ja_lut_k180_h_size,
+    m, h);
 
-// Normalize M to [0, 1] range
-ja_lut_k180_m_norm(m) = (m - ja_lut_k180_m_min) / (ja_lut_k180_m_max - ja_lut_k180_m_min);
-
-// Normalize H to [0, 1] range
-ja_lut_k180_h_norm(h) = (h - ja_lut_k180_h_min) / (ja_lut_k180_h_max - ja_lut_k180_h_min);
-
-// Bilinear interpolation lookup for M_end
-ja_lookup_m_end_k180(m, h) = result
-with {
-    m_n = max(0.0, min(1.0, ja_lut_k180_m_norm(m)));
-    h_n = max(0.0, min(1.0, ja_lut_k180_h_norm(h)));
-    
-    m_scaled = m_n * (ja_lut_k180_m_size - 1);
-    h_scaled = h_n * (ja_lut_k180_h_size - 1);
-    
-    m_idx = int(floor(m_scaled));
-    h_idx = int(floor(h_scaled));
-    
-    m_frac = m_scaled - float(m_idx);
-    h_frac = h_scaled - float(h_idx);
-    
-    m_idx_safe = min(m_idx, ja_lut_k180_m_size - 2);
-    h_idx_safe = min(h_idx, ja_lut_k180_h_size - 2);
-    
-    v00 = ja_lut_k180_m_end, ja_lut_k180_idx(m_idx_safe, h_idx_safe) : rdtable;
-    v01 = ja_lut_k180_m_end, ja_lut_k180_idx(m_idx_safe, h_idx_safe + 1) : rdtable;
-    v10 = ja_lut_k180_m_end, ja_lut_k180_idx(m_idx_safe + 1, h_idx_safe) : rdtable;
-    v11 = ja_lut_k180_m_end, ja_lut_k180_idx(m_idx_safe + 1, h_idx_safe + 1) : rdtable;
-    
-    result = v00 * (1.0 - m_frac) * (1.0 - h_frac) +
-             v01 * (1.0 - m_frac) * h_frac +
-             v10 * m_frac * (1.0 - h_frac) +
-             v11 * m_frac * h_frac;
-};
-
-// Bilinear interpolation lookup for sumM_rest
-ja_lookup_sum_m_rest_k180(m, h) = result
-with {
-    m_n = max(0.0, min(1.0, ja_lut_k180_m_norm(m)));
-    h_n = max(0.0, min(1.0, ja_lut_k180_h_norm(h)));
-    
-    m_scaled = m_n * (ja_lut_k180_m_size - 1);
-    h_scaled = h_n * (ja_lut_k180_h_size - 1);
-    
-    m_idx = int(floor(m_scaled));
-    h_idx = int(floor(h_scaled));
-    
-    m_frac = m_scaled - float(m_idx);
-    h_frac = h_scaled - float(h_idx);
-    
-    m_idx_safe = min(m_idx, ja_lut_k180_m_size - 2);
-    h_idx_safe = min(h_idx, ja_lut_k180_h_size - 2);
-    
-    v00 = ja_lut_k180_sum_m_rest, ja_lut_k180_idx(m_idx_safe, h_idx_safe) : rdtable;
-    v01 = ja_lut_k180_sum_m_rest, ja_lut_k180_idx(m_idx_safe, h_idx_safe + 1) : rdtable;
-    v10 = ja_lut_k180_sum_m_rest, ja_lut_k180_idx(m_idx_safe + 1, h_idx_safe) : rdtable;
-    v11 = ja_lut_k180_sum_m_rest, ja_lut_k180_idx(m_idx_safe + 1, h_idx_safe + 1) : rdtable;
-    
-    result = v00 * (1.0 - m_frac) * (1.0 - h_frac) +
-             v01 * (1.0 - m_frac) * h_frac +
-             v10 * m_frac * (1.0 - h_frac) +
-             v11 * m_frac * h_frac;
-};
+ja_lookup_sum_m_rest_k180(m, h) = ja_lut_bilinear(
+    ja_lut_k180_sum_m_rest,
+    ja_lut_k180_m_min, ja_lut_k180_m_max,
+    ja_lut_k180_h_min, ja_lut_k180_h_max,
+    ja_lut_k180_m_size, ja_lut_k180_h_size,
+    m, h);
