@@ -3,7 +3,7 @@
 ## Project Overview
 
 GRAME collaboration repository: Jiles-Atherton magnetic hysteresis for tape saturation.
-Goal: optimize algorithm, potentially create `ja.lib` library.
+Goal: optimize algorithm, create `jahysteresis.lib` library for GRAME contribution.
 
 **Parent project**: FSM_TAPE (full plugin)
 **This repo**: Extracted JA hysteresis only
@@ -46,12 +46,15 @@ LUTs are precomputed for `bias_level=0.41, bias_scale=11.0`.
 
 | Aspect | FAUST (LUT-optimized) | C++ (original) |
 |--------|----------------------|----------------|
-| File | `faust/ja_streaming_bias_proto.dsp` | `juce_plugin/Source/JAHysteresisScheduler.*` |
+| Library | `faust/jahysteresis.lib` | `juce_plugin/Source/JAHysteresisScheduler.*` |
+| Prototype | `faust/dev/ja_streaming_bias_proto.dsp` | - |
 | Substeps | 1 real + LUT lookup | Full loop (66 for K60) |
 | tanh | Real `ma.tanh` | `fast_tanh` rational approx |
 | CPU | <1% | ~11% |
 
 Both use identical physics: Ms=320, a=720, k=280, c=0.18, α=0.015
+
+**Library prefix**: `jah` (e.g., `jah.tape_channel_ui`)
 
 ## Quick Commands
 
@@ -75,10 +78,13 @@ cd scripts && python3 generate_ja_lut.py --mode K960 --bias-level 0.41 --output-
 FAUST_FSM_TAPE/
 ├── JUCE/                           # Shared (gitignored)
 ├── faust/
-│   ├── ja_streaming_bias_proto.dsp # FAUST prototype (LUT-optimized)
-│   ├── ja_lut_k*.lib               # Precomputed 2D LUTs
+│   ├── jahysteresis.lib            # Contribution-ready FAUST library
+│   ├── ja_lut_k*.lib               # Precomputed 2D LUTs (K28-K1920)
 │   ├── rebuild_faust.sh            # Rebuild without changing plugin IDs
-│   └── ja_streaming_bias_proto/    # Generated (gitignored)
+│   ├── dev/
+│   │   └── ja_streaming_bias_proto.dsp   # Working prototype (reference)
+│   └── examples/
+│       └── jah_tape_demo.dsp       # Demo importing jahysteresis.lib
 ├── juce_plugin/
 │   ├── JA_Hysteresis_CPP.jucer
 │   ├── CMakeLists.txt

@@ -17,11 +17,12 @@ faust/
 ├── ja_lut_k32.lib      # 8385×2 values
 ├── ...
 ├── ja_lut_k1920.lib    # 8385×2 values
-└── ja_streaming_bias_proto.dsp
-    ├── imports 10 libs
-    ├── 10 bias sin LUTs (tablesize_27..tablesize_2112)
-    ├── 10 ja_loop_kXX functions
-    └── nested ba.if selecting loop output
+└── dev/
+    └── ja_streaming_bias_proto.dsp
+        ├── imports 10 libs
+        ├── 10 bias sin LUTs (tablesize_27..tablesize_2112)
+        ├── 10 ja_loop_kXX functions
+        └── nested ba.if selecting loop output
 ```
 
 ## Proposed Structure
@@ -29,11 +30,13 @@ faust/
 ```
 faust/
 ├── ja_lut_unified.lib   # Single file with all modes
-└── ja_streaming_bias_proto.dsp
-    ├── imports 1 lib
-    ├── unified bias LUT with mode offset
-    ├── single ja_loop function with mode parameter
-    └── single feedback loop
+├── jahysteresis.lib     # Contribution-ready library
+└── dev/
+    └── ja_streaming_bias_proto.dsp
+        ├── imports 1 lib
+        ├── unified bias LUT with mode offset
+        ├── single ja_loop function with mode parameter
+        └── single feedback loop
 ```
 
 ---
@@ -242,11 +245,12 @@ After successful migration:
 |------|------|------|
 | 1 | Modify `generate_ja_lut.py` to add `--generate-all` | Low |
 | 2 | Generate `ja_lut_unified.lib` | Low |
-| 3 | Create `ja_streaming_bias_proto_v2.dsp` (new file) | Low |
+| 3 | Create `dev/ja_streaming_bias_proto_v2.dsp` (new file) | Low |
 | 4 | Test v2 against original for correctness | Medium |
 | 5 | Benchmark CPU usage | Low |
 | 6 | Replace original if tests pass | Medium |
-| 7 | Clean up old lib files | Low |
+| 7 | Update `jahysteresis.lib` with unified LUT | Medium |
+| 8 | Clean up old lib files | Low |
 
 ---
 
@@ -274,8 +278,8 @@ After successful migration:
 ## Rollback Plan
 
 Keep original files until v2 is validated:
-- `ja_streaming_bias_proto.dsp` (original)
-- `ja_streaming_bias_proto_v2.dsp` (new unified)
+- `dev/ja_streaming_bias_proto.dsp` (original)
+- `dev/ja_streaming_bias_proto_v2.dsp` (new unified)
 - All `ja_lut_kXX.lib` files
 
 Only delete after production validation.

@@ -5,7 +5,7 @@
 set -e
 cd "$(dirname "$0")"
 
-DSP_FILE="ja_streaming_bias_proto.dsp"
+DSP_FILE="dev/ja_streaming_bias_proto.dsp"
 PROJECT_DIR="ja_streaming_bias_proto"
 JUCER_FILE="$PROJECT_DIR/ja_streaming_bias_proto.jucer"
 JUCE_ARCH="/opt/homebrew/share/faust/juce/juce-plugin.cpp"
@@ -43,7 +43,10 @@ if [ -d "$PROJECT_DIR" ] && [ -f "$JUCER_FILE" ]; then
     echo "=== Done ==="
 else
     echo "=== Project doesn't exist, creating fresh ==="
+    # Note: faust2juce creates output dir based on .dsp filename, we move it after
     faust2juce -jucemodulesdir ../../JUCE/modules -osc -double "$DSP_FILE"
+    # Move generated folder from dev/ to faust/ root if needed
+    [ -d "dev/ja_streaming_bias_proto" ] && mv dev/ja_streaming_bias_proto .
     echo "✓ Project created"
     echo "IMPORTANT: Note the plugin IDs in .jucer for future reference!"
     grep -E "pluginCode|bundleIdentifier" "$JUCER_FILE"

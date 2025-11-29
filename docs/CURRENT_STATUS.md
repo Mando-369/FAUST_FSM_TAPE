@@ -7,9 +7,11 @@
 
 ## Project Goal
 
-Create a reusable **FAUST library (`ja.lib`)** for Jiles-Atherton magnetic hysteresis with phase-locked bias oscillator, suitable for tape saturation simulation.
+Create a reusable **FAUST library (`jahysteresis.lib`)** for Jiles-Atherton magnetic hysteresis with phase-locked bias oscillator, suitable for tape saturation simulation.
 
 **Target**: Mastering-grade quality at production-viable CPU cost.
+
+**Library prefix**: `jah` (e.g., `jah.tape_channel_ui`)
 
 ---
 
@@ -23,7 +25,8 @@ Create a reusable **FAUST library (`ja.lib`)** for Jiles-Atherton magnetic hyste
 | Phase-locked bias oscillator | Complete | Fixed cycles/sample, sample-rate invariant |
 | 2D LUT optimization | Complete | 1 real substep + LUT lookup |
 | 10 bias modes (K28-K1920) | Complete | LoFi to beyond-physical range |
-| FAUST prototype | Complete | `ja_streaming_bias_proto.dsp` |
+| FAUST prototype | Complete | `dev/ja_streaming_bias_proto.dsp` |
+| FAUST library | In Progress | `jahysteresis.lib` (contribution-ready) |
 | C++ reference | Complete | `JAHysteresisScheduler` with ~11% CPU |
 
 ### Performance (M4 Max, Ableton Live 12.3, AU)
@@ -217,9 +220,13 @@ Current: Pure sine bias oscillator.
 ```
 FAUST_FSM_TAPE/
 ├── faust/
-│   ├── ja_streaming_bias_proto.dsp   # Main FAUST prototype
-│   ├── ja_lut_k*.lib                 # 10 mode-specific LUT libraries
-│   └── rebuild_faust.sh              # Build script preserving plugin IDs
+│   ├── jahysteresis.lib              # Contribution-ready FAUST library (jah prefix)
+│   ├── ja_lut_k*.lib                 # 10 mode-specific LUT libraries (K28-K1920)
+│   ├── rebuild_faust.sh              # Build script preserving plugin IDs
+│   ├── dev/
+│   │   └── ja_streaming_bias_proto.dsp   # Working prototype (reference)
+│   └── examples/
+│       └── jah_tape_demo.dsp         # Demo importing jahysteresis.lib
 ├── juce_plugin/
 │   └── Source/
 │       ├── JAHysteresisScheduler.h   # C++ reference implementation
@@ -232,6 +239,9 @@ FAUST_FSM_TAPE/
     ├── JA_LUT_IMPLEMENTATION_PLAN.md # Original LUT design
     └── JA_Hysteresis_Optimization_Summary.md
 ```
+
+**Note**: `jahysteresis.lib` is the library-ready version for GRAME contribution.
+`dev/ja_streaming_bias_proto.dsp` is the working prototype kept as reference.
 
 ---
 
@@ -251,7 +261,7 @@ FAUST_FSM_TAPE/
 
 ### Documentation
 
-1. Define `ja.lib` public API
+1. Define `jahysteresis.lib` public API
 2. Write usage examples for GRAME review
 3. Document integration path back to FSM_TAPE
 

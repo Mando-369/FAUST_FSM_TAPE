@@ -1,0 +1,54 @@
+//############### jahysteresis.lib ##################
+// Jiles-Atherton Magnetic Hysteresis Library
+//
+// A FAUST library for tape saturation simulation based on the Jiles-Atherton
+// model of ferromagnetic hysteresis with phase-locked bias oscillator.
+// Uses 2D LUT optimization for production-viable CPU cost.
+//
+// * Tape Channel Processing
+// * JA Hysteresis Core
+// * LUT-Accelerated Modes (K28-K1920)
+//
+// It should be used using the `jah` environment:
+//
+// ```
+// jah = library("jahysteresis.lib");
+// process = jah.tape_channel_ui;
+// ```
+//
+// Another option is to import `stdfaust.lib` which already contains the `jah`
+// environment:
+//
+// ```
+// import("stdfaust.lib");
+// process = jah.tape_channel_ui;
+// ```
+//
+// #### References
+//
+// * Jiles, D.C. and Atherton, D.L. (1986) "Theory of ferromagnetic hysteresis"
+// * Walters, S.J. "Full Spectrum Magnetization" (phase-locked bias oscillator)
+// * <https://github.com/Mando-369/FAUST_FSM_TAPE>
+//
+//##################################################
+
+declare name "Jiles-Atherton Hysteresis Library";
+declare version "0.1.0";
+declare author "Thomas Mandolini";
+declare license "BSD";
+declare copyright "2025 Thomas Mandolini";
+
+// Its official prefix is `jah`.
+
+//======================== Tape Channel Processing ========================
+// Complete tape channel with drive, bias mode selection, and wet/dry mix.
+//=========================================================================
+
+//======================== JA Hysteresis Core =============================
+// Core Jiles-Atherton physics implementation with Newton-Raphson solver.
+//=========================================================================
+
+//======================== LUT-Accelerated Modes ==========================
+// 2D lookup tables for substeps 1..N-1 (only substep 0 computed real-time).
+// Available modes: K28, K32, K60, K90, K120, K180, K240, K480, K960, K1920.
+//=========================================================================

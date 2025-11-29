@@ -18,8 +18,10 @@ JUCE/
 .DS_Store
 *.dSYM/
 
-# FAUST generated
+# FAUST generated (plugin output from faust2*)
 faust/**/ja_streaming_bias_proto/
+faust/dev/ja_streaming_bias_proto/
+faust/examples/jah_tape_demo/
 
 # JUCE generated (Projucer)
 juce_plugin/Builds/
