@@ -45,22 +45,23 @@ class ModeConfig(NamedTuple):
 
 # Mode configurations (Normal quality)
 MODES = {
+    'K28': ModeConfig('K28', 1.5, 18),      # 27 substeps (ultra lofi)
     'K32': ModeConfig('K32', 2.0, 18),      # 36 substeps (lofi)
     'K48': ModeConfig('K48', 3.0, 18),      # 54 substeps
-    'K60': ModeConfig('K60', 3.0, 22),      # 66 substeps
-    'K120': ModeConfig('K120', 6.0, 22),    # 132 substeps
+    'K60': ModeConfig('K60', 3.0, 22),      # 66 substeps (vintage)
+    'K90': ModeConfig('K90', 4.5, 22),      # 99 substeps (warm)
+    'K120': ModeConfig('K120', 6.0, 22),    # 132 substeps (standard)
+    'K180': ModeConfig('K180', 9.0, 22),    # 198 substeps (high quality)
     'K240': ModeConfig('K240', 12.0, 22),   # 264 substeps
     'K480': ModeConfig('K480', 24.0, 22),   # 528 substeps
     'K960': ModeConfig('K960', 48.0, 22),   # 1056 substeps
-    'K1920': ModeConfig('K1920', 96.0, 22), # 2112 substeps (ultra)
+    'K1920': ModeConfig('K1920', 96.0, 22), # 2112 substeps (beyond physical)
 }
 
 
 def fast_tanh(x: np.ndarray) -> np.ndarray:
-    """Fast tanh approximation matching C++/FAUST implementation"""
-    clamped = np.clip(x, -3.0, 3.0)
-    x2 = clamped * clamped
-    return clamped * (27.0 + x2) / (27.0 + 9.0 * x2)
+    """Real tanh (matching upgraded FAUST implementation)"""
+    return np.tanh(x)
 
 
 def generate_bias_lut(mode: ModeConfig) -> np.ndarray:
@@ -150,7 +151,7 @@ def compute_remainder_response(
 def generate_2d_lut(
     mode: ModeConfig,
     physics: PhysicsParams,
-    bias_level: float = 0.62,
+    bias_level: float = 0.41,
     bias_scale: float = 11.0,
     m_size: int = 65,
     h_size: int = 129,
@@ -383,7 +384,7 @@ def export_faust_lib(
 
 def main():
     parser = argparse.ArgumentParser(description='Generate JA Hysteresis 2D LUT')
-    parser.add_argument('--mode', choices=['K32', 'K48', 'K60', 'K120', 'K240', 'K480', 'K960', 'K1920'], default='K60',
+    parser.add_argument('--mode', choices=['K28', 'K32', 'K48', 'K60', 'K90', 'K120', 'K180', 'K240', 'K480', 'K960', 'K1920'], default='K60',
                         help='Bias mode (default: K60)')
     parser.add_argument('--m-size', type=int, default=65,
                         help='M grid size (default: 65)')
@@ -391,8 +392,8 @@ def main():
                         help='H grid size (default: 129)')
     parser.add_argument('--h-range', type=float, nargs=2, default=[-1.0, 1.0],
                         help='H audio range (default: -1.0 1.0)')
-    parser.add_argument('--bias-level', type=float, default=0.62,
-                        help='Bias level (default: 0.62)')
+    parser.add_argument('--bias-level', type=float, default=0.41,
+                        help='Bias level (default: 0.41)')
     parser.add_argument('--bias-scale', type=float, default=11.0,
                         help='Bias scale (default: 11.0)')
     parser.add_argument('--output-dir', type=Path, default=Path('.'),

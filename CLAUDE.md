@@ -16,17 +16,20 @@ The FAUST implementation now uses a **2D LUT optimization** that reduces CPU fro
 - **Solution**: 1 real JA substep + 2D LUT lookup for the remainder
 - **Result**: Can run K1920 (2112 substeps) at same cost as original K60 (66 substeps)
 
-### Available Modes
+### Available Modes (10-step control)
 
-| Mode | Cycles | Substeps | Character |
-|------|--------|----------|-----------|
-| K32 LoFi | 2 | 36 | Gritty harmonics |
-| K60 | 3 | 66 | Classic tape |
-| K120 | 6 | 132 | Smooth |
-| K240 | 12 | 264 | Hi-fi |
-| K480 | 24 | 528 | Very clean |
-| K960 | 48 | 1056 | Ultra clean |
-| K1920 Ultra | 96 | 2112 | Pristine |
+| # | Mode | Cycles | Substeps | Character |
+|---|------|--------|----------|-----------|
+| 0 | K28 Ultra LoFi | 1.5 | 27 | Maximum grit |
+| 1 | K32 LoFi | 2 | 36 | Crunchy |
+| 2 | K60 Vintage | 3 | 66 | Classic tape |
+| 3 | K90 Warm | 4.5 | 99 | Smooth warmth |
+| 4 | K120 Standard | 6 | 132 | **Default** |
+| 5 | K180 HQ | 9 | 198 | High quality |
+| 6 | K240 | 12 | 264 | Very detailed |
+| 7 | K480 | 24 | 528 | Ultra detailed |
+| 8 | K960 | 48 | 1056 | Extreme |
+| 9 | K1920 Beyond | 96 | 2112 | Beyond physical |
 
 ### LUT Generation
 
