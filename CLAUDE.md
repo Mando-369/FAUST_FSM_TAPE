@@ -8,6 +8,8 @@ Goal: optimize algorithm, potentially create `ja.lib` library.
 **Parent project**: FSM_TAPE (full plugin)
 **This repo**: Extracted JA hysteresis only
 
+**Current status, open problems, and research directions**: See [`docs/CURRENT_STATUS.md`](docs/CURRENT_STATUS.md)
+
 ## LUT Optimization (Major Breakthrough!)
 
 The FAUST implementation now uses a **2D LUT optimization** that reduces CPU from ~24% to <1%:
@@ -84,6 +86,8 @@ FAUST_FSM_TAPE/
 ├── scripts/
 │   └── generate_ja_lut.py          # LUT generator
 └── docs/
+    ├── CURRENT_STATUS.md           # Project status and open problems
+    └── LUT_RESTRUCTURE_PLAN.md     # Unified LUT optimization plan
 ```
 
 ## Plugin IDs (Don't Change!)

@@ -5,6 +5,8 @@ FAUST implementation of the Jiles-Atherton (JA) magnetic hysteresis model with p
 **Author**: Thomas Mandolini / OmegaDSP
 **Contact**: thomas.mand0369@gmail.com
 
+> **Project Status**: See [`docs/CURRENT_STATUS.md`](docs/CURRENT_STATUS.md) for current state, open problems, and research directions.
+
 ## What We're Looking For (GRAME)
 
 1. **Variable-count iteration pattern** - The C++ reference uses fractional substep accumulation (step count varies 35-37 per sample for better phase continuity). FAUST's fixed unrolled chains (exactly 36/54/66) cause subtle frequency response differences. Is there an idiomatic FAUST pattern for variable iteration counts based on runtime accumulator state?
@@ -75,9 +77,16 @@ cmake -S . -B build -G Xcode && cmake --build build --config Release
 
 Both plugins use identical physics, DC blocker (SVF TPT 10 Hz), and parameter ranges.
 
-**CPU load at K60 (M4 Max):** FAUST ~24% vs C++ ~11%
+**CPU load (M4 Max, Ableton Live 12.3, AU):**
+| Implementation | CPU |
+|----------------|-----|
+| FAUST original (66 substeps) | ~24% |
+| C++ scheduler | ~11% |
+| FAUST + LUT optimization | ~1% |
 
 **Key difference:** C++ uses fractional substep accumulation (variable 35-37 steps), FAUST uses fixed unrolled chains (exactly 36/54/66). This causes subtle high-frequency response differences when bias is active.
+
+**Note:** The LUT optimization trades some flexibility (fixed bias parameters) for massive CPU reduction. See `docs/CURRENT_STATUS.md` for details on this trade-off.
 
 ## License
 
