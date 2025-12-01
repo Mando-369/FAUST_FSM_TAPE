@@ -47,15 +47,33 @@ LUTs are precomputed for `bias_level=0.41, bias_scale=11.0`.
 
 ## Implementations
 
-| Aspect | FAUST (LUT-optimized) | C++ (original) |
-|--------|----------------------|----------------|
-| Library | `faust/jahysteresis.lib` | `juce_plugin/Source/JAHysteresisScheduler.*` |
-| Prototype | `faust/dev/ja_streaming_bias_proto.dsp` | - |
-| Substeps | 1 real + LUT lookup | Full loop (66 for K60) |
-| tanh | Real `ma.tanh` | `fast_tanh` rational approx |
-| CPU | <1% | ~11% |
+| Aspect | FAUST (LUT-optimized) | C++ (original) | C++ (LUT-optimized) |
+|--------|----------------------|----------------|---------------------|
+| Location | `faust/jahysteresis.lib` | `juce_plugin/Source/JAHysteresisScheduler.*` | `cpp_reference/JAHysteresisSchedulerLUT.*` |
+| Prototype | `faust/dev/ja_streaming_bias_proto.dsp` | - | - |
+| Substeps | 1 real + LUT lookup | Full loop (66 for K60) | 1 real + LUT lookup |
+| tanh | Real `ma.tanh` | `fast_tanh` rational approx | `fast_tanh` rational approx |
+| CPU | <1% | ~11% | <1% (expected) |
 
-Both use identical physics: Ms=320, a=720, k=280, c=0.18, α=0.015
+All implementations use identical physics: Ms=320, a=720, k=280, c=0.18, α=0.015
+
+### C++ LUT Integration
+
+The `cpp_reference/` folder contains a ready-to-integrate LUT-optimized C++ scheduler:
+
+```cpp
+#include "JAHysteresisSchedulerLUT.h"
+#include "JAHysteresisLUT_K121.h"  // from faust/
+
+scheduler.initialise(sampleRate, Mode::K121, physics);
+scheduler.setLUT(JAHysteresisLUT_K121::LUT_M_END.data(),
+                 JAHysteresisLUT_K121::LUT_SUM_M_REST.data(),
+                 JAHysteresisLUT_K121::M_SIZE,
+                 JAHysteresisLUT_K121::H_SIZE);
+double output = scheduler.process(input);
+```
+
+See `cpp_reference/JAHysteresisSchedulerLUT_README.md` for full integration guide.
 
 **Library prefix**: `jah` (e.g., `jah.tape_channel_ui`)
 
@@ -120,24 +138,32 @@ FAUST_FSM_TAPE/
 ├── faust/
 │   ├── jahysteresis.lib            # Contribution-ready FAUST library
 │   ├── ja_lut_k*.lib               # Precomputed 2D LUTs (K28-K2101)
+│   ├── JAHysteresisLUT_K*.h        # C++ LUT headers (all 10 modes)
 │   ├── rebuild_faust.sh            # Rebuild without changing plugin IDs
 │   ├── dev/
-│   │   └── ja_streaming_bias_proto.dsp   # Working prototype (ba.if version)
+│   │   ├── ja_streaming_bias_proto.dsp       # Working prototype (ba.if version)
+│   │   ├── ja_streaming_bias_proto_OD_72.dsp # 72-substep ondemand prototype
+│   │   └── test_gated_substeps.dsp           # Gated substeps test
 │   ├── test/
-│   │   ├── ja_streaming_bias_proto_od.dsp  # Ondemand prototype
-│   │   └── ja_lut_k*.lib           # LUTs for test builds
+│   │   ├── test_gated_substeps.dsp           # Ondemand gating tests
+│   │   └── ja_lut_k*.lib                     # LUTs for test builds
 │   └── examples/
 │       └── jah_tape_demo.dsp       # Demo importing jahysteresis.lib
+├── cpp_reference/
+│   ├── JAHysteresisScheduler.*     # Original C++ scheduler (~11% CPU)
+│   ├── JAHysteresisSchedulerLUT.*  # LUT-optimized C++ scheduler (<1% CPU)
+│   └── JAHysteresisSchedulerLUT_README.md  # Integration guide
 ├── juce_plugin/
 │   ├── JA_Hysteresis_CPP.jucer
 │   ├── CMakeLists.txt
 │   └── Source/
 ├── scripts/
-│   └── generate_ja_lut.py          # LUT generator
-├── tools/
+│   └── generate_ja_lut.py          # LUT generator (outputs .lib and .h)
+├── tools/                          # Gitignored - clone separately
 │   └── faust-ondemand/             # Dev fork with ondemand primitive
 └── docs/
     ├── CURRENT_STATUS.md           # Project status and open problems
+    ├── GRAME_ONDEMAND_BUG_REPORT.md # Ondemand primitive bug report
     └── LUT_RESTRUCTURE_PLAN.md     # Unified LUT optimization plan
 ```
 

@@ -1,6 +1,6 @@
 # FAUST JA Hysteresis Library — Current Status
 
-**Last updated**: 2025-11-30
+**Last updated**: 2025-12-01
 **Collaborators**: Thomas Mandolini (OmegaDSP), GRAME (Stéphane Letz)
 
 ---
@@ -26,17 +26,20 @@ Create a reusable **FAUST library (`jahysteresis.lib`)** for Jiles-Atherton magn
 | 2D LUT optimization | Complete | 1 real substep + LUT lookup |
 | 10 bias modes (K28-K2101) | Complete | LoFi to beyond-physical range (all half-integer cycles) |
 | FAUST prototype (ba.if) | Complete | `dev/ja_streaming_bias_proto.dsp` |
-| FAUST prototype (ondemand) | Complete | `test/ja_streaming_bias_proto_od.dsp` |
+| FAUST prototype (ondemand) | Complete | `dev/ja_streaming_bias_proto_OD_72.dsp` |
 | FAUST library | In Progress | `jahysteresis.lib` (contribution-ready) |
-| C++ reference | Complete | `JAHysteresisScheduler` with ~11% CPU |
+| C++ reference (original) | Complete | `JAHysteresisScheduler` with ~11% CPU |
+| C++ reference (LUT) | Complete | `JAHysteresisSchedulerLUT` with <1% CPU expected |
 
 ### Performance (M4 Max, Ableton Live 12.3, AU)
 
 | Implementation | CPU @ K60 | Notes |
 |----------------|-----------|-------|
 | FAUST (original, 66 substeps) | ~24% | Sequential dependency bottleneck |
-| C++ scheduler | ~11% | Uses fractional substep accumulation |
+| C++ scheduler (original) | ~11% | Uses fractional substep accumulation |
 | FAUST + LUT | ~1% | 20x+ improvement |
+| FAUST + ondemand (72 substeps) | ~8% | Single mode, compile-time gating |
+| C++ + LUT | <1% expected | Ready for integration, see `cpp_reference/` |
 
 ### Achieved Breakthrough
 
@@ -50,23 +53,39 @@ Create a reusable **FAUST library (`jahysteresis.lib`)** for Jiles-Atherton magn
 
 ## Open Problems
 
-### 1. Parallel Computation Overhead (Priority: High) — SOLVED
+### 1. Parallel Computation Overhead (Priority: High) — PARTIALLY SOLVED
 
 **Problem**: FAUST `ba.if` is a signal selector, not a conditional branch. All 10 mode loops are computed every sample; `ba.if` just picks the output.
 
-**Solution**: The **Ondemand primitive** (Yann Orlarey, IFC 24) is now working! It enables true conditional block execution where only the selected mode computes.
+**Solution**: The **Ondemand primitive** (Yann Orlarey, IFC 24) enables true conditional block execution.
 
-**Implementation**: `faust/test/ja_streaming_bias_proto_od.dsp` uses `ondemand` with a dev fork in `tools/faust-ondemand/`.
+**Limitation discovered**: `ondemand` requires **compile-time determinable clocks** for complex `seq` chains. Runtime mode selection with full substep computation **does not work** — generates invalid C++ with undeclared variables.
+
+| Clock Type | Operations Inside | Result |
+|------------|-------------------|--------|
+| Runtime (UI mode) | Simple (LUT lookup) | Works |
+| Runtime (UI mode) | Complex (`seq(i,60,...)`) | **Bug - invalid C++** |
+| Compile-time (`i` from seq) | Complex (`seq(i,72,...)`) | Works |
+
+**Working implementations**:
+- `faust/test/ja_streaming_bias_proto_od.dsp` — LUT-based, runtime mode selection
+- `faust/dev/ja_streaming_bias_proto_OD_72.dsp` — Full 72 substeps, compile-time gating
+
+**For GRAME/Stéphane**: See `docs/GRAME_ONDEMAND_BUG_REPORT.md` for full details. Question: Is there a way to achieve runtime mode selection with full substep computation using `ondemand`, or is LUT the only viable approach?
 
 ```faust
-// Old: 10 parallel computations (ba.if)
-ba.if(mode < 0.5, loopK28, ba.if(mode < 1.5, loopK45, ...))
+// Works: compile-time i from seq
+gated_substep(i, M_prev, H_prev, ...) = ... with {
+    clk = (i < steps_this_sample);  // i from seq is compile-time!
+    physics_result = clk : ondemand(ja_physics(...));
+};
+seq(i, MAX_STEPS, gated_substep(i))
 
-// New: Only active mode computes (ondemand)
-sum(i, 10, clk(i) * (clk(i) : ondemand(loop(i, H_in))))
+// Doesn't work: runtime mode selection + complex seq inside
+clk(i) = (int(mode) == i);  // runtime clock from UI
+loop(0, H) = clk(0) : ondemand(loopK(H, ja_loop60, ...));  // ja_loop60 = seq(i,60,...)
+// -> generates invalid C++ with undeclared fTempXXSE variables
 ```
-
-**Status**: Prototype builds and runs as AU plugin. CPU testing pending.
 
 ### 2. Harmonic Imprint Research (Priority: High) — SOLVED
 
@@ -109,12 +128,185 @@ sum(i, 10, clk(i) * (clk(i) : ondemand(loop(i, H_in))))
 
 **Impact**: Subtle high-frequency response differences between FAUST and C++.
 
-**Potential FAUST pattern**: Unroll to max count, gate inactive steps:
-```faust
-ba.if(step_idx < steps_this_sample, computeStep, passThrough)
+**Note**: With LUT optimization, this becomes less critical since only substep 0 is computed in real-time.
+
+---
+
+## Ondemand Implementation Options
+
+With the experimental `ondemand` primitive now available, there are **two approaches** to optimize the full-precision (non-LUT) FAUST implementation.
+
+### Background: C++ Scheduler Superiority
+
+The C++ `JAHysteresisScheduler` (`cpp_reference/JAHysteresisScheduler.cpp`) sounds superior due to its **dynamic substep scheduling**:
+
+```cpp
+// C++ scheduler: fractional cursor determines substeps per sample
+substepCursor += biasCyclesPerSample * substepsPerCycle;
+int stepsTaken = static_cast<int>(std::floor(substepCursor));
+substepCursor -= static_cast<double>(stepsTaken);  // carry fraction
+
+for (int i = 0; i < stepsTaken; ++i) {
+    executeSubstep(...);
+}
+if (stepsTaken == 0) stepsTaken = 1;  // guarantee minimum 1
 ```
 
-**Note**: With LUT optimization, this becomes less critical since only substep 0 is computed in real-time.
+Key features:
+- **Fractional accumulation**: Cursor carries between samples
+- **Variable substep count**: Sometimes N, sometimes N+1 substeps
+- **Phase continuity**: Leftover phase advances smoothly
+- **Mode × Quality**: K32/K48/K60 × Eco/Normal/Ultra combinations
+
+| Mode | Eco | Normal | Ultra |
+|------|-----|--------|-------|
+| K32 (2 cycles) | 32 | 36 | 40 |
+| K48 (3 cycles) | 48 | 54 | 57 |
+| K60 (3 cycles) | 60 | 66 | 72 |
+
+### Option A: Simple Mode-Level Ondemand (Recommended First)
+
+**Concept**: Use `ondemand` to select between K24/K48/K60 modes. Only the active mode computes.
+
+**Prototype**: `faust/dev/ja_streaming_bias_proto_OD_24.dsp`
+
+```faust
+// Each mode has fixed substep count via seq
+ja_loop24 = seq(i, 24, ja_substep_with_phase);
+ja_loop48 = seq(i, 48, ja_substep_with_phase);
+ja_loop60 = seq(i, 60, ja_substep_with_phase);
+
+// Ondemand selects which mode computes
+ja_hysteresis(H_in) =
+    sum(i, 3,
+        clk(i) * (clk(i) : ondemand(loop(i, H_in)))
+    )
+with {
+    mode = int(bias_mode + 0.5);
+    clk(i) = (mode == i);
+
+    loop(0, H) = loopK(H, ja_loop24, inv_24, phi_k24, dphi_k24);
+    loop(1, H) = loopK(H, ja_loop48, inv_48, phi_k48, dphi_k48);
+    loop(2, H) = loopK(H, ja_loop60, inv_60, phi_k60, dphi_k60);
+};
+```
+
+**Pros**:
+- Simple, proven pattern (same as LUT prototype)
+- Significant CPU savings (only 1 of 3 modes computes)
+- Clean code structure
+
+**Cons**:
+- Fixed substep count per mode (no fractional accumulation)
+- Doesn't match C++ scheduler's variable iteration
+- May have subtle sound differences from C++
+
+**Status**: Implementation in progress.
+
+### Option B: Dynamic Substep Gating (Experimental, Future)
+
+**Concept**: Replicate C++ scheduler behavior by gating individual substeps with `ondemand`.
+
+**Goal**: Variable substep count per sample based on fractional cursor accumulation.
+
+```faust
+// Maximum possible substeps (K60 Ultra = 72)
+MAX_STEPS = 72;
+
+// Cursor accumulator - determines how many substeps THIS sample
+cursor_target = biasCycles * substepsPerCycle;  // e.g., 3.0 * 22 = 66
+cursor_acc = cursor_target : (+ ~ _);           // accumulates
+cursor_prev = cursor_acc @ 1;
+steps_this_sample = int(floor(cursor_acc)) - int(floor(cursor_prev)) : max(1);
+
+// Each substep gated by runtime comparison
+gated_substep(i)(M_prev, H_prev, H_audio, M_sum, phi, D) =
+    M_sum_out, M_out, H_out, H_audio, phi_out, D
+with {
+    clk = (i < steps_this_sample);  // runtime: 1 if should run, 0 otherwise
+
+    // Expensive JA physics only computed when clk=1
+    computed = clk : ondemand(ja_substep_with_phase(M_prev, H_prev, H_audio, M_sum, phi, D));
+
+    // Extract computed values (0 when clk=0 due to ondemand)
+    M_sum_computed = ba.selector(0, 6, computed);
+    M_computed     = ba.selector(1, 6, computed);
+    H_computed     = ba.selector(2, 6, computed);
+    phi_computed   = ba.selector(4, 6, computed);
+
+    // Select: computed result when clk=1, pass-through when clk=0
+    // ba.if evaluates both, but ondemand already saved the expensive computation
+    M_sum_out = ba.if(clk, M_sum_computed, M_sum);
+    M_out     = ba.if(clk, M_computed, M_prev);
+    H_out     = ba.if(clk, H_computed, H_prev);
+    phi_out   = ba.if(clk, phi_computed, phi);
+};
+
+// Chain all potential substeps - inactive ones pass through
+process_chain =
+    M_prev, H_prev, H_audio, 0.0, phi0, D
+    : seq(i, MAX_STEPS, gated_substep(i))
+    <: ba.selector(0, 6), ba.selector(1, 6), ba.selector(2, 6);
+
+// Divide by actual steps taken (not fixed count)
+output = process_chain : /(float(steps_this_sample));
+```
+
+**Key Challenges**:
+
+1. **Ondemand syntax with inputs**: Unclear if `clk : ondemand(f(inputs))` works when `f` needs signal inputs from the seq chain.
+
+2. **Pass-through logic**: When `clk=0`, ondemand outputs 0. Need `ba.if` to select pass-through values. The `ba.if` evaluates both branches, but ondemand already saved the expensive computation.
+
+3. **Graph size**: Creates MAX_STEPS (72) substep instances. CPU savings come from ondemand not computing inactive ones, but memory/graph fixed.
+
+4. **Division by variable**: `steps_this_sample` varies per sample. Need to divide accumulated M_sum by actual count, not fixed.
+
+**Pros**:
+- Matches C++ scheduler behavior exactly
+- Variable substep count with fractional accumulation
+- Could achieve C++ sound quality
+
+**Cons**:
+- Experimental - may not work with current ondemand semantics
+- Complex implementation
+- Larger signal graph (72 substep instances regardless of mode)
+- Needs testing to verify CPU savings
+
+**Status**: PARTIALLY WORKING (2025-12-01)
+
+**Breakthrough**: The gating pattern works when `i` is compile-time from seq:
+```faust
+// Working pattern - compile-time i
+gated_substep(i, M_prev, H_prev, ...) = M_out, H_out, ...
+with {
+    clk = (i < steps_this_sample);  // i from seq is compile-time!
+    physics_result = clk : ondemand(ja_physics(...));
+    ...
+};
+seq(i, MAX_STEPS, gated_substep(i))  // pass i to function
+```
+
+**Working prototype**: `faust/dev/test_gated_substeps.dsp` compiles and runs with 72 substeps (K60 Ultra).
+
+**Remaining question**: Does the dynamic cursor variation work? The current prototype uses `steps_this_sample = 72` as a compile-time constant. The full C++ scheduler behavior requires runtime `steps_this_sample` from cursor accumulation - this may trigger the same ondemand bug seen with runtime clocks + complex seq.
+
+### Comparison
+
+| Aspect | Option A (Simple) | Option B (Dynamic) |
+|--------|-------------------|-------------------|
+| Implementation | Straightforward | Complex |
+| Ondemand usage | Mode selection (proven) | Substep gating (experimental) |
+| Substeps/sample | Fixed (24/48/60) | Variable (cursor-based) |
+| C++ parity | Partial | Full |
+| Sound quality | Good | Potentially matches C++ |
+| Risk | Low | High |
+
+### Recommendation
+
+1. **Implement Option A first** - proven pattern, immediate CPU savings
+2. **Test Option B later** - once Option A is stable, experiment with dynamic gating
+3. **Compare sound quality** - A/B test FAUST vs C++ to quantify differences
 
 ---
 
@@ -149,7 +341,7 @@ Key documentation reviewed:
 - [ba.tabulate functions](https://faustlibraries.grame.fr/libs/basics/#batabulate)
 - [General optimization guide](https://faustdoc.grame.fr/manual/optimizing/)
 
-**Note**: Same LUT optimization approach could be applied to the C++ version for even lower CPU usage.
+**Note**: The LUT optimization has now been applied to the C++ version — see `cpp_reference/JAHysteresisSchedulerLUT.*` for the implementation and `JAHysteresisSchedulerLUT_README.md` for integration instructions.
 
 ---
 
@@ -204,19 +396,32 @@ FAUST_FSM_TAPE/
 ├── faust/
 │   ├── jahysteresis.lib              # Contribution-ready FAUST library (jah prefix)
 │   ├── ja_lut_k*.lib                 # 10 mode-specific LUT libraries (K28-K2101)
+│   ├── JAHysteresisLUT_K*.h          # C++ LUT headers (all 10 modes)
 │   ├── rebuild_faust.sh              # Build script preserving plugin IDs
 │   ├── dev/
-│   │   └── ja_streaming_bias_proto.dsp   # Working prototype (reference)
+│   │   ├── ja_streaming_bias_proto.dsp       # Working prototype (ba.if version)
+│   │   ├── ja_streaming_bias_proto_OD_72.dsp # 72-substep ondemand prototype
+│   │   └── test_gated_substeps.dsp           # Gated substeps experiment
+│   ├── test/
+│   │   ├── test_gated_substeps.dsp           # Ondemand gating tests
+│   │   └── ja_lut_k*.lib                     # LUTs for test builds
 │   └── examples/
 │       └── jah_tape_demo.dsp         # Demo importing jahysteresis.lib
+├── cpp_reference/
+│   ├── JAHysteresisScheduler.*       # Original C++ scheduler (~11% CPU)
+│   ├── JAHysteresisSchedulerLUT.*    # LUT-optimized C++ scheduler (<1% CPU)
+│   └── JAHysteresisSchedulerLUT_README.md  # Integration guide
 ├── juce_plugin/
 │   └── Source/
 │       ├── JAHysteresisScheduler.h   # C++ reference implementation
 │       └── JAHysteresisScheduler.cpp
 ├── scripts/
-│   └── generate_ja_lut.py            # LUT generator
+│   └── generate_ja_lut.py            # LUT generator (outputs .lib and .h)
+├── tools/                            # Gitignored - clone separately
+│   └── faust-ondemand/               # Dev fork with ondemand primitive
 └── docs/
     ├── CURRENT_STATUS.md             # This file
+    ├── GRAME_ONDEMAND_BUG_REPORT.md  # Ondemand primitive bug report
     ├── LUT_RESTRUCTURE_PLAN.md       # Unified LUT proposal
     ├── JA_LUT_IMPLEMENTATION_PLAN.md # Original LUT design
     └── JA_Hysteresis_Optimization_Summary.md
@@ -260,7 +465,8 @@ Invited by Stéphane Letz to present at **International Faust Conference 2026**:
 
 1. Any recommendations for managing multiple LUT variants (mode × parameter combinations)?
 2. ~~Timeline for the **Ondemand primitive**?~~ — Working! Dev fork in `tools/faust-ondemand/`
-3. Best practices for contributing optimized libraries to faustlibraries?
+3. **Ondemand + runtime mode selection**: Is there a way to use `ondemand` for runtime mode switching with complex `seq` chains inside (full JA substeps), or does `ondemand` fundamentally require compile-time clocks for complex operations? See `docs/GRAME_ONDEMAND_BUG_REPORT.md` for details.
+4. Best practices for contributing optimized libraries to faustlibraries?
 
 ---
 
