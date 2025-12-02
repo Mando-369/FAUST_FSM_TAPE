@@ -45,6 +45,19 @@ python3 generate_ja_lut.py --mode K121 --bias-level 0.41 --output-dir ../faust
 
 LUTs are precomputed for `bias_level=0.41, bias_scale=11.0`.
 
+### LUT Responsiveness Challenge
+
+The LUT optimization is CPU-efficient but creates static behavior (same input = same output).
+The C++ full-physics version (~11% CPU) feels more "alive" due to variable substep counts and continuous phase.
+
+**Goal**: Highest quality at affordable CPU (anything below C++ 11% is acceptable).
+
+**Options** (see [`docs/JA_LUT_NONLINEARITY.md`](docs/JA_LUT_NONLINEARITY.md)):
+1. Multiple real substeps (2-3 instead of 1)
+2. Dynamic α(M) — magnetization-dependent coupling
+3. Slew-dependent k(dH) — rate-responsive pinning
+4. Dynamic c(M) — level-dependent reversibility
+
 ## Implementations
 
 | Aspect | FAUST (LUT-optimized) | C++ (original) | C++ (LUT-optimized) |
@@ -163,6 +176,7 @@ FAUST_FSM_TAPE/
 │   └── faust-ondemand/             # Dev fork with ondemand primitive
 └── docs/
     ├── CURRENT_STATUS.md           # Project status and open problems
+    ├── JA_LUT_NONLINEARITY.md      # LUT enhancement options for responsiveness
     ├── GRAME_ONDEMAND_BUG_REPORT.md # Ondemand primitive bug report
     └── LUT_RESTRUCTURE_PLAN.md     # Unified LUT optimization plan
 ```

@@ -1,6 +1,6 @@
 # FAUST JA Hysteresis Library — Current Status
 
-**Last updated**: 2025-12-01
+**Last updated**: 2025-12-02
 **Collaborators**: Thomas Mandolini (OmegaDSP), GRAME (Stéphane Letz)
 
 ---
@@ -120,7 +120,30 @@ loop(0, H) = clk(0) : ondemand(loopK(H, ja_loop60, ...));  // ja_loop60 = seq(i,
 3. Runtime LUT regeneration (background thread, crossfade)
 4. Accept fixed bias as "tape formulation" preset
 
-### 4. Variable Iteration Pattern (Priority: Low)
+### 4. LUT Responsiveness / Static Behavior (Priority: High) — IN PROGRESS
+
+**Problem**: The LUT optimization creates static behavior — same `(M1, H_audio)` always produces identical output. The C++ full-physics version feels more "alive" due to:
+- Variable substep count (fractional cursor: 65, 66, 67...)
+- Continuous phase across samples
+- All substeps computed with real physics
+
+**Challenge**: Full FAUST physics = ~24% CPU (unusable). C++ full physics = ~11% CPU (quality reference).
+**Goal**: Highest quality at affordable CPU — anything below C++ 11% is acceptable.
+
+**Research document**: [`docs/JA_LUT_NONLINEARITY.md`](JA_LUT_NONLINEARITY.md)
+
+**Options being explored** (in priority order):
+
+| Option | Type | Description | CPU Impact |
+|--------|------|-------------|------------|
+| 1. Multiple real substeps | Pure JA | 2-3 substeps before LUT | +2-3 substeps |
+| 2. Dynamic α(M) | Pure JA | Coupling varies with magnetization | Negligible |
+| 3. Slew-dependent k(dH) | Pure JA | Pinning responds to input rate | Negligible |
+| 4. Dynamic c(M) | Pure JA | Reversibility varies with level | Negligible |
+
+**Previous experiment**: `faust/dev/ja_streaming_bias_proto_backup.dsp` implemented midpoint sampling and C++ substep counts, but not fractional cursor or continuous phase.
+
+### 5. Variable Iteration Pattern (Priority: Low)
 
 **C++ reference behavior**: Fractional substep accumulation causes step count to vary (e.g., 35-37 for K60) for better phase continuity.
 
@@ -378,6 +401,18 @@ Key documentation reviewed:
 
 ## Research Directions
 
+### LUT Responsiveness Enhancement (Active)
+
+See [`docs/JA_LUT_NONLINEARITY.md`](JA_LUT_NONLINEARITY.md) for full analysis.
+
+**Goal**: Achieve highest quality at affordable CPU (below C++ 11%), matching the dynamic feel of full-physics C++.
+
+**Priority order**:
+1. Pure JA physics: Dynamic α(M), k(dH), c(M) in substep 0
+2. Pure JA physics: Multiple real substeps (2-3 instead of 1)
+3. Workarounds: Envelope modulation of JA parameters
+4. Heuristics: Index warping, interpolation correction (last resort)
+
 ### Bias Waveform Variations (Future)
 
 Current: Pure sine bias oscillator.
@@ -421,6 +456,7 @@ FAUST_FSM_TAPE/
 │   └── faust-ondemand/               # Dev fork with ondemand primitive
 └── docs/
     ├── CURRENT_STATUS.md             # This file
+    ├── JA_LUT_NONLINEARITY.md        # LUT responsiveness enhancement options
     ├── GRAME_ONDEMAND_BUG_REPORT.md  # Ondemand primitive bug report
     ├── LUT_RESTRUCTURE_PLAN.md       # Unified LUT proposal
     ├── JA_LUT_IMPLEMENTATION_PLAN.md # Original LUT design
@@ -436,14 +472,14 @@ FAUST_FSM_TAPE/
 
 ### Immediate (Code)
 
-1. Implement unified LUT structure (`LUT_RESTRUCTURE_PLAN.md`)
-2. Benchmark CPU reduction from eliminating parallel computation
-3. Validate sound quality against per-mode LUT version
+1. **LUT Responsiveness**: Prototype dynamic α(M) + k(dH) in `ja_substep0` (see `JA_LUT_NONLINEARITY.md`)
+2. If insufficient: Implement 2 real substeps + regenerate LUTs
+3. Benchmark CPU and A/B test against full-physics C++
 
 ### Research
 
-1. Conduct harmonic imprint analysis for all 10 modes
-2. Identify musically distinct anchor points
+1. Validate responsiveness enhancements against C++ reference
+2. Conduct harmonic imprint analysis for all 10 modes
 3. Determine if mode interpolation is viable
 
 ### Documentation
