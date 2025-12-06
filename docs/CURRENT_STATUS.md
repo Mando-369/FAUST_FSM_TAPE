@@ -1,6 +1,6 @@
 # FAUST JA Hysteresis Library — Current Status
 
-**Last updated**: 2025-12-02
+**Last updated**: 2025-12-06
 **Collaborators**: Thomas Mandolini (OmegaDSP), GRAME (Stéphane Letz)
 
 ---
@@ -27,6 +27,7 @@ Create a reusable **FAUST library (`jahysteresis.lib`)** for Jiles-Atherton magn
 | 10 bias modes (K28-K2101) | Complete | LoFi to beyond-physical range (all half-integer cycles) |
 | FAUST prototype (ba.if) | Complete | `dev/ja_streaming_bias_proto.dsp` |
 | FAUST prototype (ondemand) | Complete | `dev/ja_streaming_bias_proto_OD_72.dsp` |
+| FAUST full-physics proto | Complete | `dev/jahysteresislib_proto.dsp` (K60 Ultra, 72 substeps) |
 | FAUST library | In Progress | `jahysteresis.lib` (contribution-ready) |
 | C++ reference (original) | Complete | `JAHysteresisScheduler` with ~11% CPU |
 | C++ reference (LUT) | Complete | `JAHysteresisSchedulerLUT` with <1% CPU expected |
@@ -48,6 +49,25 @@ Create a reusable **FAUST library (`jahysteresis.lib`)** for Jiles-Atherton magn
 **Solution**: Precompute 2D LUT mapping `(M_in, H_audio) → (M_end, sumM_rest)` for the deterministic portion.
 
 **Result**: Collapsed 66 JA physics evaluations to 1 + cheap bilinear interpolation.
+
+### Full-Physics Prototype (2025-12-06)
+
+New prototype `dev/jahysteresislib_proto.dsp` implements **exact C++ reference matching**:
+
+- **Mode**: K60 Ultra (3 cycles × 24 substeps = 72 total)
+- **Physics**: Full JA computation for all 72 substeps via `seq(i, 72, ja_substep_seq)`
+- **Phase continuity**: M, H, and phase fed back across samples (3-way feedback loop)
+- **Matching C++**: fast_tanh with ±3 clamp, inv_a_norm safety guard, wrap_2pi after each substep
+
+**Key fixes implemented**:
+1. Phase wrapped inside substep loop (like C++ `if (phase >= 2π) phase -= 2π`)
+2. Correct feedback order: `[M, H, phase, M_sum]` with first 3 for feedback
+3. Exposed physics parameters: Ms, a, k, c, α, bias_level, bias_scale
+
+**Parameters**:
+- Input/Output/Drive gain controls
+- Drive range: -18 to +29 dB
+- DC blocker: 10 Hz, Q=0.74
 
 ---
 
@@ -436,6 +456,7 @@ FAUST_FSM_TAPE/
 │   ├── dev/
 │   │   ├── ja_streaming_bias_proto.dsp       # Working prototype (ba.if version)
 │   │   ├── ja_streaming_bias_proto_OD_72.dsp # 72-substep ondemand prototype
+│   │   ├── jahysteresislib_proto.dsp         # Full-physics K60 Ultra (C++ match)
 │   │   └── test_gated_substeps.dsp           # Gated substeps experiment
 │   ├── test/
 │   │   ├── test_gated_substeps.dsp           # Ondemand gating tests
@@ -499,10 +520,9 @@ Invited by Stéphane Letz to present at **International Faust Conference 2026**:
 
 ## Questions for GRAME
 
-1. Any recommendations for managing multiple LUT variants (mode × parameter combinations)?
-2. ~~Timeline for the **Ondemand primitive**?~~ — Working! Dev fork in `tools/faust-ondemand/`
-3. **Ondemand + runtime mode selection**: Is there a way to use `ondemand` for runtime mode switching with complex `seq` chains inside (full JA substeps), or does `ondemand` fundamentally require compile-time clocks for complex operations? See `docs/GRAME_ONDEMAND_BUG_REPORT.md` for details.
-4. Best practices for contributing optimized libraries to faustlibraries?
+1. Any recommendations for managing multiple LUT variants (mode × parameter combinations) or interpolation variants?
+2. **Ondemand + runtime mode selection**: Is there a way to use `ondemand` for runtime mode switching with complex `seq` chains inside (full JA substeps), or does `ondemand` fundamentally require compile-time clocks for complex operations? See `docs/GRAME_ONDEMAND_BUG_REPORT.md` for details.
+
 
 ---
 

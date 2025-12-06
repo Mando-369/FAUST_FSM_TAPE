@@ -67,15 +67,23 @@ cd scripts && python3 generate_ja_lut.py --mode K121 --variants --output-dir ../
 
 ## Implementations
 
-| Aspect | FAUST (LUT-optimized) | C++ (original) | C++ (LUT-optimized) |
-|--------|----------------------|----------------|---------------------|
-| Location | `faust/jahysteresis.lib` | `juce_plugin/Source/JAHysteresisScheduler.*` | `cpp_reference/JAHysteresisSchedulerLUT.*` |
-| Prototype | `faust/dev/ja_streaming_bias_proto.dsp` | - | - |
-| Substeps | 1 real + LUT lookup | Full loop (66 for K60) | 1 real + LUT lookup |
-| tanh | Real `ma.tanh` | `fast_tanh` rational approx | `fast_tanh` rational approx |
-| CPU | <1% | ~11% | <1% (expected) |
+| Aspect | FAUST (LUT-optimized) | FAUST (full-physics) | C++ (original) |
+|--------|----------------------|----------------------|----------------|
+| Location | `faust/jahysteresis.lib` | `faust/dev/jahysteresislib_proto.dsp` | `cpp_reference/JAHysteresisScheduler.*` |
+| Mode | 10 modes (K28-K2101) | K60 Ultra (72 substeps) | K32/K48/K60 × Eco/Normal/Ultra |
+| Substeps | 1 real + LUT lookup | Full 72 via `seq` | Full loop |
+| tanh | Real `ma.tanh` | `fast_tanh` (±3 clamp) | `fast_tanh` (±3 clamp) |
+| CPU | <1% | TBD | ~11% |
 
 All implementations use identical physics: Ms=320, a=720, k=280, c=0.18, α=0.015
+
+### Full-Physics Prototype
+
+`faust/dev/jahysteresislib_proto.dsp` - K60 Ultra single mode matching C++ exactly:
+- 72 substeps via `seq(i, 72, ja_substep_seq)`
+- Phase continuity: M, H, phase fed back across samples
+- Exposed physics parameters (sliders)
+- Drive range: -18 to +29 dB
 
 ### C++ LUT Integration
 
@@ -163,6 +171,7 @@ FAUST_FSM_TAPE/
 │   ├── dev/
 │   │   ├── ja_streaming_bias_proto.dsp       # Working prototype (ba.if version)
 │   │   ├── ja_streaming_bias_proto_OD_72.dsp # 72-substep ondemand prototype
+│   │   ├── jahysteresislib_proto.dsp         # Full-physics K60 Ultra (C++ match)
 │   │   └── test_gated_substeps.dsp           # Gated substeps test
 │   ├── test/
 │   │   ├── test_gated_substeps.dsp           # Ondemand gating tests

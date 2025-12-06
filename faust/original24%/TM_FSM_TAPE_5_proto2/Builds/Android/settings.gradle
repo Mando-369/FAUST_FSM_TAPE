@@ -1,0 +1,2 @@
+rootProject.name = 'TM_FSM_TAPE_5_proto2'
+include ':app'
