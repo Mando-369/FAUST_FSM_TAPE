@@ -42,6 +42,26 @@ class ModeConfig(NamedTuple):
         """Total phase span in radians"""
         return 2.0 * np.pi * self.cycles_per_sample
 
+    def get_variants(self) -> list:
+        """
+        Returns variants with N-1, N, N+1 substeps.
+        Each variant has the SAME phase span but different substep count.
+        This changes the phase step size (dphi = phase_span / substeps).
+        """
+        base = self.total_substeps
+        return [
+            ModeConfigVariant(f"K{base-1}", self.phase_span, base - 1),
+            ModeConfigVariant(f"K{base}", self.phase_span, base),
+            ModeConfigVariant(f"K{base+1}", self.phase_span, base + 1),
+        ]
+
+
+class ModeConfigVariant(NamedTuple):
+    """Variant mode config with fixed phase span and variable substeps"""
+    name: str
+    phase_span: float
+    total_substeps: int
+
 
 # Mode configurations
 # Pattern: half-integer cycles + odd substeps = rich harmonic content
@@ -67,10 +87,10 @@ def fast_tanh(x: np.ndarray) -> np.ndarray:
     return np.tanh(x)
 
 
-def generate_bias_lut(mode: ModeConfig) -> np.ndarray:
+def generate_bias_lut(phase_span: float, total_substeps: int) -> np.ndarray:
     """Generate bias sin() values for all substeps (midpoint sampling)"""
-    n = mode.total_substeps
-    dphi = mode.phase_span / n
+    n = total_substeps
+    dphi = phase_span / n
     # Midpoint sampling: sin((i + 0.5) * dphi)
     indices = np.arange(n)
     return np.sin((indices + 0.5) * dphi)
@@ -152,7 +172,9 @@ def compute_remainder_response(
 
 
 def generate_2d_lut(
-    mode: ModeConfig,
+    name: str,
+    phase_span: float,
+    total_substeps: int,
     physics: PhysicsParams,
     bias_level: float = 0.41,
     bias_scale: float = 11.0,
@@ -170,7 +192,7 @@ def generate_2d_lut(
         lut_sumM_rest: 2D array of sumM_rest values
     """
     bias_amplitude = bias_level * bias_scale
-    bias_lut = generate_bias_lut(mode)
+    bias_lut = generate_bias_lut(phase_span, total_substeps)
 
     # Create grids
     m_grid = np.linspace(-1.0, 1.0, m_size)
@@ -180,12 +202,13 @@ def generate_2d_lut(
     lut_M_end = np.zeros((m_size, h_size))
     lut_sumM_rest = np.zeros((m_size, h_size))
 
-    total = m_size * h_size
+    total_points = m_size * h_size
     count = 0
 
-    print(f"Generating LUT for {mode.name}: {m_size}x{h_size} = {total} points")
+    print(f"Generating LUT for {name}: {m_size}x{h_size} = {total_points} points")
+    print(f"Phase span: {phase_span:.4f} rad ({phase_span/np.pi:.2f}π)")
     print(f"Bias amplitude: {bias_amplitude:.3f}")
-    print(f"Substeps: {mode.total_substeps} (computing 1..{mode.total_substeps-1})")
+    print(f"Substeps: {total_substeps} (computing 1..{total_substeps-1})")
 
     for i, M_in in enumerate(m_grid):
         for j, H_audio in enumerate(h_grid):
@@ -198,7 +221,7 @@ def generate_2d_lut(
 
             count += 1
             if count % 1000 == 0:
-                print(f"  Progress: {count}/{total} ({100*count/total:.1f}%)")
+                print(f"  Progress: {count}/{total_points} ({100*count/total_points:.1f}%)")
 
     print(f"Done! LUT shape: {lut_M_end.shape}")
 
@@ -210,20 +233,21 @@ def export_cpp_header(
     h_grid: np.ndarray,
     lut_M_end: np.ndarray,
     lut_sumM_rest: np.ndarray,
-    mode: ModeConfig,
+    name: str,
+    total_substeps: int,
     output_path: Path
 ):
     """Export LUT as C++ header file"""
     m_size, h_size = lut_M_end.shape
 
     with open(output_path, 'w') as f:
-        f.write(f"// Auto-generated JA Hysteresis LUT for {mode.name}\n")
+        f.write(f"// Auto-generated JA Hysteresis LUT for {name}\n")
         f.write(f"// Grid: {m_size} x {h_size} = {m_size * h_size} points\n")
-        f.write(f"// Substeps covered: 1..{mode.total_substeps - 1}\n\n")
+        f.write(f"// Substeps covered: 1..{total_substeps - 1}\n\n")
 
         f.write("#pragma once\n\n")
         f.write("#include <array>\n\n")
-        f.write(f"namespace JAHysteresisLUT_{mode.name} {{\n\n")
+        f.write(f"namespace JAHysteresisLUT_{name} {{\n\n")
 
         f.write(f"constexpr int M_SIZE = {m_size};\n")
         f.write(f"constexpr int H_SIZE = {h_size};\n")
@@ -264,7 +288,8 @@ def export_faust_lib(
     h_grid: np.ndarray,
     lut_M_end: np.ndarray,
     lut_sumM_rest: np.ndarray,
-    mode: ModeConfig,
+    name: str,
+    total_substeps: int,
     output_path: Path
 ):
     """Export LUT as FAUST library file"""
@@ -275,14 +300,14 @@ def export_faust_lib(
     flat_sumM_rest = lut_sumM_rest.flatten()
 
     with open(output_path, 'w') as f:
-        f.write(f"// Auto-generated JA Hysteresis LUT for {mode.name}\n")
+        f.write(f"// Auto-generated JA Hysteresis LUT for {name}\n")
         f.write(f"// Grid: {m_size} x {h_size} = {m_size * h_size} points\n")
-        f.write(f"// Substeps covered: 1..{mode.total_substeps - 1}\n\n")
+        f.write(f"// Substeps covered: 1..{total_substeps - 1}\n\n")
 
         f.write("import(\"stdfaust.lib\");\n\n")
 
-        prefix = mode.name.lower()
-        f.write(f"// Grid parameters for {mode.name}\n")
+        prefix = name.lower()
+        f.write(f"// Grid parameters for {name}\n")
         f.write(f"ja_lut_{prefix}_m_size = {m_size};\n")
         f.write(f"ja_lut_{prefix}_h_size = {h_size};\n")
         f.write(f"ja_lut_{prefix}_m_min = {m_grid[0]:.6f};\n")
@@ -322,8 +347,17 @@ def export_faust_lib(
         f.write("// Normalize H to [0, 1] range\n")
         f.write(f"ja_lut_{prefix}_h_norm(h) = (h - ja_lut_{prefix}_h_min) / (ja_lut_{prefix}_h_max - ja_lut_{prefix}_h_min);\n\n")
 
-        # Write bilinear interpolation for M_end table
-        f.write("// Bilinear interpolation lookup for M_end\n")
+        # Write 1D Catmull-Rom helper function
+        f.write("// 1D Catmull-Rom interpolation: p0,p1,p2,p3 are 4 consecutive points, t in [0,1]\n")
+        f.write(f"ja_catmull_rom_{prefix}(p0, p1, p2, p3, t) = 0.5 * (\n")
+        f.write("    2.0*p1 +\n")
+        f.write("    (-p0 + p2) * t +\n")
+        f.write("    (2.0*p0 - 5.0*p1 + 4.0*p2 - p3) * t * t +\n")
+        f.write("    (-p0 + 3.0*p1 - 3.0*p2 + p3) * t * t * t\n")
+        f.write(");\n\n")
+
+        # Write Catmull-Rom interpolation for M_end table
+        f.write("// Separable Catmull-Rom interpolation lookup for M_end\n")
         f.write(f"ja_lookup_m_end_{prefix}(m, h) = result\n")
         f.write("with {\n")
         f.write(f"    m_n = max(0.0, min(1.0, ja_lut_{prefix}_m_norm(m)));\n")
@@ -338,22 +372,32 @@ def export_faust_lib(
         f.write("    m_frac = m_scaled - float(m_idx);\n")
         f.write("    h_frac = h_scaled - float(h_idx);\n")
         f.write("    \n")
-        f.write(f"    m_idx_safe = min(m_idx, ja_lut_{prefix}_m_size - 2);\n")
-        f.write(f"    h_idx_safe = min(h_idx, ja_lut_{prefix}_h_size - 2);\n")
+        f.write("    // Clamp indices for 4x4 Catmull-Rom (need p-1, p, p+1, p+2)\n")
+        f.write(f"    m0 = max(0, m_idx - 1);\n")
+        f.write(f"    m1 = max(0, min(m_idx, ja_lut_{prefix}_m_size - 1));\n")
+        f.write(f"    m2 = max(0, min(m_idx + 1, ja_lut_{prefix}_m_size - 1));\n")
+        f.write(f"    m3 = min(m_idx + 2, ja_lut_{prefix}_m_size - 1);\n")
         f.write("    \n")
-        f.write(f"    v00 = ja_lut_{prefix}_m_end, ja_lut_{prefix}_idx(m_idx_safe, h_idx_safe) : rdtable;\n")
-        f.write(f"    v01 = ja_lut_{prefix}_m_end, ja_lut_{prefix}_idx(m_idx_safe, h_idx_safe + 1) : rdtable;\n")
-        f.write(f"    v10 = ja_lut_{prefix}_m_end, ja_lut_{prefix}_idx(m_idx_safe + 1, h_idx_safe) : rdtable;\n")
-        f.write(f"    v11 = ja_lut_{prefix}_m_end, ja_lut_{prefix}_idx(m_idx_safe + 1, h_idx_safe + 1) : rdtable;\n")
+        f.write(f"    h0 = max(0, h_idx - 1);\n")
+        f.write(f"    h1 = max(0, min(h_idx, ja_lut_{prefix}_h_size - 1));\n")
+        f.write(f"    h2 = max(0, min(h_idx + 1, ja_lut_{prefix}_h_size - 1));\n")
+        f.write(f"    h3 = min(h_idx + 2, ja_lut_{prefix}_h_size - 1);\n")
         f.write("    \n")
-        f.write("    result = v00 * (1.0 - m_frac) * (1.0 - h_frac) +\n")
-        f.write("             v01 * (1.0 - m_frac) * h_frac +\n")
-        f.write("             v10 * m_frac * (1.0 - h_frac) +\n")
-        f.write("             v11 * m_frac * h_frac;\n")
+        f.write("    // Fetch 16 points (4x4 grid)\n")
+        for mi in range(4):
+            for hi in range(4):
+                f.write(f"    v{mi}{hi} = ja_lut_{prefix}_m_end, ja_lut_{prefix}_idx(m{mi}, h{hi}) : rdtable;\n")
+        f.write("    \n")
+        f.write("    // Interpolate 4 columns along H axis\n")
+        for mi in range(4):
+            f.write(f"    col{mi} = ja_catmull_rom_{prefix}(v{mi}0, v{mi}1, v{mi}2, v{mi}3, h_frac);\n")
+        f.write("    \n")
+        f.write("    // Interpolate along M axis\n")
+        f.write(f"    result = ja_catmull_rom_{prefix}(col0, col1, col2, col3, m_frac);\n")
         f.write("};\n\n")
 
-        # Write bilinear interpolation for sumM_rest table
-        f.write("// Bilinear interpolation lookup for sumM_rest\n")
+        # Write Catmull-Rom interpolation for sumM_rest table
+        f.write("// Separable Catmull-Rom interpolation lookup for sumM_rest\n")
         f.write(f"ja_lookup_sum_m_rest_{prefix}(m, h) = result\n")
         f.write("with {\n")
         f.write(f"    m_n = max(0.0, min(1.0, ja_lut_{prefix}_m_norm(m)));\n")
@@ -368,27 +412,69 @@ def export_faust_lib(
         f.write("    m_frac = m_scaled - float(m_idx);\n")
         f.write("    h_frac = h_scaled - float(h_idx);\n")
         f.write("    \n")
-        f.write(f"    m_idx_safe = min(m_idx, ja_lut_{prefix}_m_size - 2);\n")
-        f.write(f"    h_idx_safe = min(h_idx, ja_lut_{prefix}_h_size - 2);\n")
+        f.write("    // Clamp indices for 4x4 Catmull-Rom\n")
+        f.write(f"    m0 = max(0, m_idx - 1);\n")
+        f.write(f"    m1 = max(0, min(m_idx, ja_lut_{prefix}_m_size - 1));\n")
+        f.write(f"    m2 = max(0, min(m_idx + 1, ja_lut_{prefix}_m_size - 1));\n")
+        f.write(f"    m3 = min(m_idx + 2, ja_lut_{prefix}_m_size - 1);\n")
         f.write("    \n")
-        f.write(f"    v00 = ja_lut_{prefix}_sum_m_rest, ja_lut_{prefix}_idx(m_idx_safe, h_idx_safe) : rdtable;\n")
-        f.write(f"    v01 = ja_lut_{prefix}_sum_m_rest, ja_lut_{prefix}_idx(m_idx_safe, h_idx_safe + 1) : rdtable;\n")
-        f.write(f"    v10 = ja_lut_{prefix}_sum_m_rest, ja_lut_{prefix}_idx(m_idx_safe + 1, h_idx_safe) : rdtable;\n")
-        f.write(f"    v11 = ja_lut_{prefix}_sum_m_rest, ja_lut_{prefix}_idx(m_idx_safe + 1, h_idx_safe + 1) : rdtable;\n")
+        f.write(f"    h0 = max(0, h_idx - 1);\n")
+        f.write(f"    h1 = max(0, min(h_idx, ja_lut_{prefix}_h_size - 1));\n")
+        f.write(f"    h2 = max(0, min(h_idx + 1, ja_lut_{prefix}_h_size - 1));\n")
+        f.write(f"    h3 = min(h_idx + 2, ja_lut_{prefix}_h_size - 1);\n")
         f.write("    \n")
-        f.write("    result = v00 * (1.0 - m_frac) * (1.0 - h_frac) +\n")
-        f.write("             v01 * (1.0 - m_frac) * h_frac +\n")
-        f.write("             v10 * m_frac * (1.0 - h_frac) +\n")
-        f.write("             v11 * m_frac * h_frac;\n")
+        f.write("    // Fetch 16 points (4x4 grid)\n")
+        for mi in range(4):
+            for hi in range(4):
+                f.write(f"    v{mi}{hi} = ja_lut_{prefix}_sum_m_rest, ja_lut_{prefix}_idx(m{mi}, h{hi}) : rdtable;\n")
+        f.write("    \n")
+        f.write("    // Interpolate 4 columns along H axis\n")
+        for mi in range(4):
+            f.write(f"    col{mi} = ja_catmull_rom_{prefix}(v{mi}0, v{mi}1, v{mi}2, v{mi}3, h_frac);\n")
+        f.write("    \n")
+        f.write("    // Interpolate along M axis\n")
+        f.write(f"    result = ja_catmull_rom_{prefix}(col0, col1, col2, col3, m_frac);\n")
         f.write("};\n")
 
     print(f"Exported FAUST library: {output_path}")
+
+
+def generate_single_lut(name: str, phase_span: float, total_substeps: int,
+                        physics: PhysicsParams, args, output_dir: Path):
+    """Generate a single LUT with given parameters"""
+    print(f"\n--- Generating {name} ({total_substeps} substeps, phase span {phase_span/np.pi:.2f}π) ---")
+
+    m_grid, h_grid, lut_M_end, lut_sumM_rest = generate_2d_lut(
+        name=name,
+        phase_span=phase_span,
+        total_substeps=total_substeps,
+        physics=physics,
+        bias_level=args.bias_level,
+        bias_scale=args.bias_scale,
+        m_size=args.m_size,
+        h_size=args.h_size,
+        h_range=tuple(args.h_range)
+    )
+
+    cpp_path = output_dir / f"JAHysteresisLUT_{name}.h"
+    faust_path = output_dir / f"ja_lut_{name.lower()}.lib"
+
+    export_cpp_header(m_grid, h_grid, lut_M_end, lut_sumM_rest, name, total_substeps, cpp_path)
+    export_faust_lib(m_grid, h_grid, lut_M_end, lut_sumM_rest, name, total_substeps, faust_path)
+
+    print(f"  M_end range: [{lut_M_end.min():.6f}, {lut_M_end.max():.6f}]")
+    print(f"  sumM_rest range: [{lut_sumM_rest.min():.6f}, {lut_sumM_rest.max():.6f}]")
+    print(f"  Memory: {lut_M_end.nbytes * 2 / 1024:.1f} KB")
+
+    return m_grid, h_grid, lut_M_end, lut_sumM_rest
 
 
 def main():
     parser = argparse.ArgumentParser(description='Generate JA Hysteresis 2D LUT')
     parser.add_argument('--mode', choices=list(MODES.keys()), default='K121',
                         help='Bias mode (default: K121)')
+    parser.add_argument('--variants', action='store_true',
+                        help='Generate N-1, N, N+1 variants (same phase span, different substeps)')
     parser.add_argument('--m-size', type=int, default=65,
                         help='M grid size (default: 65)')
     parser.add_argument('--h-size', type=int, default=129,
@@ -408,38 +494,46 @@ def main():
     physics = PhysicsParams()
 
     print(f"\n=== JA Hysteresis LUT Generator ===")
-    print(f"Mode: {mode.name}")
+    print(f"Mode: {mode.name} (base: {mode.total_substeps} substeps)")
+    print(f"Phase span: {mode.phase_span:.4f} rad ({mode.phase_span/np.pi:.2f}π)")
     print(f"Physics: Ms={physics.Ms}, a={physics.a_density}, k={physics.k_pinning}, c={physics.c_reversibility}, α={physics.alpha_coupling}")
     print(f"Grid: M[{args.m_size}] x H[{args.h_size}]")
     print(f"H range: [{args.h_range[0]}, {args.h_range[1]}]")
-    print(f"Bias: level={args.bias_level}, scale={args.bias_scale}\n")
+    print(f"Bias: level={args.bias_level}, scale={args.bias_scale}")
 
-    # Generate LUT
-    m_grid, h_grid, lut_M_end, lut_sumM_rest = generate_2d_lut(
-        mode=mode,
-        physics=physics,
-        bias_level=args.bias_level,
-        bias_scale=args.bias_scale,
-        m_size=args.m_size,
-        h_size=args.h_size,
-        h_range=tuple(args.h_range)
-    )
+    if args.variants:
+        print(f"\n=== VARIANT MODE: Generating N-1, N, N+1 ===")
 
     # Create output directory
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Export
-    cpp_path = args.output_dir / f"JAHysteresisLUT_{mode.name}.h"
-    faust_path = args.output_dir / f"ja_lut_{mode.name.lower()}.lib"
+    if args.variants:
+        # Generate N-1, N, N+1 variants with SAME phase span
+        variants = mode.get_variants()
+        for variant in variants:
+            generate_single_lut(
+                name=variant.name,
+                phase_span=variant.phase_span,
+                total_substeps=variant.total_substeps,
+                physics=physics,
+                args=args,
+                output_dir=args.output_dir
+            )
+        print(f"\n=== Generated {len(variants)} variants ===")
+        for v in variants:
+            print(f"  {v.name}: {v.total_substeps} substeps")
+    else:
+        # Generate single LUT (original behavior)
+        generate_single_lut(
+            name=mode.name,
+            phase_span=mode.phase_span,
+            total_substeps=mode.total_substeps,
+            physics=physics,
+            args=args,
+            output_dir=args.output_dir
+        )
 
-    export_cpp_header(m_grid, h_grid, lut_M_end, lut_sumM_rest, mode, cpp_path)
-    export_faust_lib(m_grid, h_grid, lut_M_end, lut_sumM_rest, mode, faust_path)
-
-    # Summary statistics
-    print(f"\n=== LUT Statistics ===")
-    print(f"M_end range: [{lut_M_end.min():.6f}, {lut_M_end.max():.6f}]")
-    print(f"sumM_rest range: [{lut_sumM_rest.min():.6f}, {lut_sumM_rest.max():.6f}]")
-    print(f"Memory: {lut_M_end.nbytes * 2 / 1024:.1f} KB (both LUTs)")
+    print("\nDone!")
 
 
 if __name__ == '__main__':

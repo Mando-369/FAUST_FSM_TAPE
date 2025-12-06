@@ -4221,7 +4221,15 @@ ja_lut_k121_m_norm(m) = (m - ja_lut_k121_m_min) / (ja_lut_k121_m_max - ja_lut_k1
 // Normalize H to [0, 1] range
 ja_lut_k121_h_norm(h) = (h - ja_lut_k121_h_min) / (ja_lut_k121_h_max - ja_lut_k121_h_min);
 
-// Bilinear interpolation lookup for M_end
+// 1D Catmull-Rom interpolation: p0,p1,p2,p3 are 4 consecutive points, t in [0,1]
+ja_catmull_rom_k121(p0, p1, p2, p3, t) = 0.5 * (
+    2.0*p1 +
+    (-p0 + p2) * t +
+    (2.0*p0 - 5.0*p1 + 4.0*p2 - p3) * t * t +
+    (-p0 + 3.0*p1 - 3.0*p2 + p3) * t * t * t
+);
+
+// Separable Catmull-Rom interpolation lookup for M_end
 ja_lookup_m_end_k121(m, h) = result
 with {
     m_n = max(0.0, min(1.0, ja_lut_k121_m_norm(m)));
@@ -4236,21 +4244,46 @@ with {
     m_frac = m_scaled - float(m_idx);
     h_frac = h_scaled - float(h_idx);
     
-    m_idx_safe = min(m_idx, ja_lut_k121_m_size - 2);
-    h_idx_safe = min(h_idx, ja_lut_k121_h_size - 2);
+    // Clamp indices for 4x4 Catmull-Rom (need p-1, p, p+1, p+2)
+    m0 = max(0, m_idx - 1);
+    m1 = max(0, min(m_idx, ja_lut_k121_m_size - 1));
+    m2 = max(0, min(m_idx + 1, ja_lut_k121_m_size - 1));
+    m3 = min(m_idx + 2, ja_lut_k121_m_size - 1);
     
-    v00 = ja_lut_k121_m_end, ja_lut_k121_idx(m_idx_safe, h_idx_safe) : rdtable;
-    v01 = ja_lut_k121_m_end, ja_lut_k121_idx(m_idx_safe, h_idx_safe + 1) : rdtable;
-    v10 = ja_lut_k121_m_end, ja_lut_k121_idx(m_idx_safe + 1, h_idx_safe) : rdtable;
-    v11 = ja_lut_k121_m_end, ja_lut_k121_idx(m_idx_safe + 1, h_idx_safe + 1) : rdtable;
+    h0 = max(0, h_idx - 1);
+    h1 = max(0, min(h_idx, ja_lut_k121_h_size - 1));
+    h2 = max(0, min(h_idx + 1, ja_lut_k121_h_size - 1));
+    h3 = min(h_idx + 2, ja_lut_k121_h_size - 1);
     
-    result = v00 * (1.0 - m_frac) * (1.0 - h_frac) +
-             v01 * (1.0 - m_frac) * h_frac +
-             v10 * m_frac * (1.0 - h_frac) +
-             v11 * m_frac * h_frac;
+    // Fetch 16 points (4x4 grid)
+    v00 = ja_lut_k121_m_end, ja_lut_k121_idx(m0, h0) : rdtable;
+    v01 = ja_lut_k121_m_end, ja_lut_k121_idx(m0, h1) : rdtable;
+    v02 = ja_lut_k121_m_end, ja_lut_k121_idx(m0, h2) : rdtable;
+    v03 = ja_lut_k121_m_end, ja_lut_k121_idx(m0, h3) : rdtable;
+    v10 = ja_lut_k121_m_end, ja_lut_k121_idx(m1, h0) : rdtable;
+    v11 = ja_lut_k121_m_end, ja_lut_k121_idx(m1, h1) : rdtable;
+    v12 = ja_lut_k121_m_end, ja_lut_k121_idx(m1, h2) : rdtable;
+    v13 = ja_lut_k121_m_end, ja_lut_k121_idx(m1, h3) : rdtable;
+    v20 = ja_lut_k121_m_end, ja_lut_k121_idx(m2, h0) : rdtable;
+    v21 = ja_lut_k121_m_end, ja_lut_k121_idx(m2, h1) : rdtable;
+    v22 = ja_lut_k121_m_end, ja_lut_k121_idx(m2, h2) : rdtable;
+    v23 = ja_lut_k121_m_end, ja_lut_k121_idx(m2, h3) : rdtable;
+    v30 = ja_lut_k121_m_end, ja_lut_k121_idx(m3, h0) : rdtable;
+    v31 = ja_lut_k121_m_end, ja_lut_k121_idx(m3, h1) : rdtable;
+    v32 = ja_lut_k121_m_end, ja_lut_k121_idx(m3, h2) : rdtable;
+    v33 = ja_lut_k121_m_end, ja_lut_k121_idx(m3, h3) : rdtable;
+    
+    // Interpolate 4 columns along H axis
+    col0 = ja_catmull_rom_k121(v00, v01, v02, v03, h_frac);
+    col1 = ja_catmull_rom_k121(v10, v11, v12, v13, h_frac);
+    col2 = ja_catmull_rom_k121(v20, v21, v22, v23, h_frac);
+    col3 = ja_catmull_rom_k121(v30, v31, v32, v33, h_frac);
+    
+    // Interpolate along M axis
+    result = ja_catmull_rom_k121(col0, col1, col2, col3, m_frac);
 };
 
-// Bilinear interpolation lookup for sumM_rest
+// Separable Catmull-Rom interpolation lookup for sumM_rest
 ja_lookup_sum_m_rest_k121(m, h) = result
 with {
     m_n = max(0.0, min(1.0, ja_lut_k121_m_norm(m)));
@@ -4265,16 +4298,41 @@ with {
     m_frac = m_scaled - float(m_idx);
     h_frac = h_scaled - float(h_idx);
     
-    m_idx_safe = min(m_idx, ja_lut_k121_m_size - 2);
-    h_idx_safe = min(h_idx, ja_lut_k121_h_size - 2);
+    // Clamp indices for 4x4 Catmull-Rom
+    m0 = max(0, m_idx - 1);
+    m1 = max(0, min(m_idx, ja_lut_k121_m_size - 1));
+    m2 = max(0, min(m_idx + 1, ja_lut_k121_m_size - 1));
+    m3 = min(m_idx + 2, ja_lut_k121_m_size - 1);
     
-    v00 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m_idx_safe, h_idx_safe) : rdtable;
-    v01 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m_idx_safe, h_idx_safe + 1) : rdtable;
-    v10 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m_idx_safe + 1, h_idx_safe) : rdtable;
-    v11 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m_idx_safe + 1, h_idx_safe + 1) : rdtable;
+    h0 = max(0, h_idx - 1);
+    h1 = max(0, min(h_idx, ja_lut_k121_h_size - 1));
+    h2 = max(0, min(h_idx + 1, ja_lut_k121_h_size - 1));
+    h3 = min(h_idx + 2, ja_lut_k121_h_size - 1);
     
-    result = v00 * (1.0 - m_frac) * (1.0 - h_frac) +
-             v01 * (1.0 - m_frac) * h_frac +
-             v10 * m_frac * (1.0 - h_frac) +
-             v11 * m_frac * h_frac;
+    // Fetch 16 points (4x4 grid)
+    v00 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m0, h0) : rdtable;
+    v01 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m0, h1) : rdtable;
+    v02 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m0, h2) : rdtable;
+    v03 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m0, h3) : rdtable;
+    v10 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m1, h0) : rdtable;
+    v11 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m1, h1) : rdtable;
+    v12 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m1, h2) : rdtable;
+    v13 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m1, h3) : rdtable;
+    v20 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m2, h0) : rdtable;
+    v21 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m2, h1) : rdtable;
+    v22 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m2, h2) : rdtable;
+    v23 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m2, h3) : rdtable;
+    v30 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m3, h0) : rdtable;
+    v31 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m3, h1) : rdtable;
+    v32 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m3, h2) : rdtable;
+    v33 = ja_lut_k121_sum_m_rest, ja_lut_k121_idx(m3, h3) : rdtable;
+    
+    // Interpolate 4 columns along H axis
+    col0 = ja_catmull_rom_k121(v00, v01, v02, v03, h_frac);
+    col1 = ja_catmull_rom_k121(v10, v11, v12, v13, h_frac);
+    col2 = ja_catmull_rom_k121(v20, v21, v22, v23, h_frac);
+    col3 = ja_catmull_rom_k121(v30, v31, v32, v33, h_frac);
+    
+    // Interpolate along M axis
+    result = ja_catmull_rom_k121(col0, col1, col2, col3, m_frac);
 };

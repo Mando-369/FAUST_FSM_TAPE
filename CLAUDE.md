@@ -45,18 +45,25 @@ python3 generate_ja_lut.py --mode K121 --bias-level 0.41 --output-dir ../faust
 
 LUTs are precomputed for `bias_level=0.41, bias_scale=11.0`.
 
-### LUT Responsiveness Challenge
+### Variable Substep LUT (Major Breakthrough!)
 
-The LUT optimization is CPU-efficient but creates static behavior (same input = same output).
-The C++ full-physics version (~11% CPU) feels more "alive" due to variable substep counts and continuous phase.
+The original LUT was static - same input always produced identical output. The C++ version sounds more "alive" due to variable substep counts from fractional cursor accumulation.
 
-**Goal**: Highest quality at affordable CPU (anything below C++ 11% is acceptable).
+**Solution implemented** (see [`docs/VARIABLE_SUBSTEP_LUT_PLAN.md`](docs/VARIABLE_SUBSTEP_LUT_PLAN.md)):
 
-**Options** (see [`docs/JA_LUT_NONLINEARITY.md`](docs/JA_LUT_NONLINEARITY.md)):
-1. Multiple real substeps (2-3 instead of 1)
-2. Dynamic α(M) — magnetization-dependent coupling
-3. Slew-dependent k(dH) — rate-responsive pinning
-4. Dynamic c(M) — level-dependent reversibility
+1. **Multiple LUT variants**: Generate K120, K121, K122 (N-1, N, N+1) with same phase span but different substep counts
+2. **Fractional cursor**: Accumulates 0.5 each sample, smoothly blends across all 3 LUTs
+3. **Cosine crossfade**: Smooth transitions between LUTs (not hard switching)
+4. **Catmull-Rom interpolation**: 16-point bicubic instead of 4-point bilinear within each LUT
+
+**Result**: Sound quality now very close to C++ reference! Much more detail and "bite".
+
+```bash
+# Generate variant LUTs
+cd scripts && python3 generate_ja_lut.py --mode K121 --variants --output-dir ../faust/test
+```
+
+**Test prototype**: `faust/test/test_var_subst_lut.dsp`
 
 ## Implementations
 
