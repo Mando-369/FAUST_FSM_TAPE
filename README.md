@@ -34,13 +34,16 @@ Physics parameters:
 
 ### Phase-Locked Bias Oscillator
 
-Fixed bias cycles per audio sample (sample-rate invariant):
+Fixed bias cycles per audio sample (sample-rate invariant).
 
-| Mode | Cycles/Sample | Substeps | Points/Cycle |
-|------|---------------|----------|--------------|
-| K32 | 2 | 36 | 18 |
-| K48 | 3 | 54 | 18 |
-| K60 | 3 | 66 | 22 |
+**Note**: Integer cycles required to avoid 12kHz bias leakage (half-integer cycles tested, caused audible tone from residual phase accumulation).
+
+| Mode | Cycles/Sample | Substeps | Character |
+|------|---------------|----------|-----------|
+| K28 | 1 | 28 | Maximum grit |
+| K63 | 3 | 63 | Classic tape |
+| K121 | 5 | 121 | Standard |
+| K253 | 11 | 253 | Detailed |
 
 Each substep uses midpoint sampling: `sin(phi + 0.5 * dphi)`
 
@@ -87,6 +90,14 @@ Both plugins use identical physics, DC blocker (SVF TPT 10 Hz), and parameter ra
 **Key difference:** C++ uses fractional substep accumulation (variable 35-37 steps), FAUST uses fixed unrolled chains (exactly 36/54/66). This causes subtle high-frequency response differences when bias is active.
 
 **Note:** The LUT optimization trades some flexibility (fixed bias parameters) for massive CPU reduction. See `docs/CURRENT_STATUS.md` for details on this trade-off.
+
+### Full-Physics Prototype
+
+`faust/dev/jahysteresislib_proto.dsp` — Production-ready full-physics implementation:
+- K60 Ultra (72 substeps, 3 cycles × 24)
+- Stabilization: diff_scale soft clamp, sigma=1e-3
+- Gain compensation: +15.6 dB makeup + piecewise bias compensation
+- UI: Grouped controls (Gain, Bias, Stab, Physics)
 
 ## License
 

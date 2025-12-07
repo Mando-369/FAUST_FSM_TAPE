@@ -5,9 +5,9 @@
 set -e
 cd "$(dirname "$0")"
 
-DSP_FILE="dev/ja_streaming_bias_proto.dsp"
-PROJECT_DIR="ja_streaming_bias_proto"
-JUCER_FILE="$PROJECT_DIR/ja_streaming_bias_proto.jucer"
+DSP_FILE="dev/jahysteresislib_proto.dsp"
+PROJECT_DIR="jahysteresislib_proto"
+JUCER_FILE="$PROJECT_DIR/jahysteresislib_proto.jucer"
 JUCE_ARCH="/opt/homebrew/share/faust/juce/juce-plugin.cpp"
 PROJUCER="$(dirname "$0")/../JUCE/extras/Projucer/Builds/MacOSX/build/Release/Projucer.app/Contents/MacOS/Projucer"
 
@@ -31,11 +31,11 @@ if [ -d "$PROJECT_DIR" ] && [ -f "$JUCER_FILE" ]; then
     echo "✓ Xcode project updated"
 
     cd "$PROJECT_DIR/Builds/MacOSX"
-    xcodebuild -project ja_streaming_bias_proto.xcodeproj -scheme "ja_streaming_bias_proto - AU" -configuration Release build | tail -3
+    xcodebuild -project jahysteresislib_proto.xcodeproj -scheme "jahysteresislib_proto - AU" -configuration Release build | tail -3
 
     # Install to Components folder (remove old first)
-    COMPONENT_SRC="build/Release/ja_streaming_bias_proto.component"
-    COMPONENT_DST="$HOME/Library/Audio/Plug-Ins/Components/ja_streaming_bias_proto.component"
+    COMPONENT_SRC="build/Release/jahysteresislib_proto.component"
+    COMPONENT_DST="$HOME/Library/Audio/Plug-Ins/Components/jahysteresislib_proto.component"
     rm -rf "$COMPONENT_DST"
     cp -R "$COMPONENT_SRC" "$COMPONENT_DST"
     echo "✓ Installed to Components"
@@ -46,7 +46,7 @@ else
     # Note: faust2juce creates output dir based on .dsp filename, we move it after
     faust2juce -jucemodulesdir ../../JUCE/modules -osc -double "$DSP_FILE"
     # Move generated folder from dev/ to faust/ root if needed
-    [ -d "dev/ja_streaming_bias_proto" ] && mv dev/ja_streaming_bias_proto .
+    [ -d "dev/jahysteresislib_proto" ] && mv dev/jahysteresislib_proto .
     echo "✓ Project created"
     echo "IMPORTANT: Note the plugin IDs in .jucer for future reference!"
     grep -E "pluginCode|bundleIdentifier" "$JUCER_FILE"

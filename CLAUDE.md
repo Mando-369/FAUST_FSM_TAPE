@@ -20,21 +20,20 @@ The FAUST implementation now uses a **2D LUT optimization** that reduces CPU fro
 
 ### Available Modes (10-step control)
 
-All modes use **half-integer cycles + odd substeps** for rich harmonic content.
-This ensures opposite bias polarity between adjacent samples, introducing even harmonics.
+**Note**: LUT modes use integer cycles to avoid bias leakage. Half-integer cycles were tested but cause audible 12kHz tone from residual phase accumulation.
 
 | # | Mode | Cycles | Substeps | Character |
 |---|------|--------|----------|-----------|
-| 0 | K28 Ultra LoFi | 1.5 | 27 | Maximum grit |
-| 1 | K45 LoFi | 2.5 | 45 | Crunchy |
-| 2 | K63 Vintage | 3.5 | 63 | Classic tape |
-| 3 | K99 Warm | 4.5 | 99 | Smooth warmth |
-| 4 | K121 Standard | 5.5 | 121 | **Default** |
-| 5 | K187 HQ | 8.5 | 187 | High quality |
-| 6 | K253 Detailed | 11.5 | 253 | Very detailed |
-| 7 | K495 Ultra | 22.5 | 495 | Ultra detailed |
-| 8 | K1045 Extreme | 47.5 | 1045 | Extreme |
-| 9 | K2101 Beyond | 95.5 | 2101 | Beyond physical |
+| 0 | K28 Ultra LoFi | 1 | 28 | Maximum grit |
+| 1 | K45 LoFi | 2 | 45 | Crunchy |
+| 2 | K63 Vintage | 3 | 63 | Classic tape |
+| 3 | K99 Warm | 4 | 99 | Smooth warmth |
+| 4 | K121 Standard | 5 | 121 | **Default** |
+| 5 | K187 HQ | 8 | 187 | High quality |
+| 6 | K253 Detailed | 11 | 253 | Very detailed |
+| 7 | K495 Ultra | 22 | 495 | Ultra detailed |
+| 8 | K1045 Extreme | 47 | 1045 | Extreme |
+| 9 | K2101 Beyond | 95 | 2101 | Beyond physical |
 
 ### LUT Generation
 
@@ -72,17 +71,20 @@ cd scripts && python3 generate_ja_lut.py --mode K121 --variants --output-dir ../
 | Location | `faust/jahysteresis.lib` | `faust/dev/jahysteresislib_proto.dsp` | `cpp_reference/JAHysteresisScheduler.*` |
 | Mode | 10 modes (K28-K2101) | K60 Ultra (72 substeps) | K32/K48/K60 × Eco/Normal/Ultra |
 | Substeps | 1 real + LUT lookup | Full 72 via `seq` | Full loop |
-| tanh | Real `ma.tanh` | `fast_tanh` (±3 clamp) | `fast_tanh` (±3 clamp) |
+| tanh | Real `ma.tanh` | Real `ma.tanh` | `fast_tanh` (±3 clamp) |
 | CPU | <1% | TBD | ~11% |
 
 All implementations use identical physics: Ms=320, a=720, k=280, c=0.18, α=0.015
 
 ### Full-Physics Prototype
 
-`faust/dev/jahysteresislib_proto.dsp` - K60 Ultra single mode matching C++ exactly:
-- 72 substeps via `seq(i, 72, ja_substep_seq)`
+`faust/dev/jahysteresislib_proto.dsp` - K60 Ultra single mode:
+- 72 substeps via `seq(i, 72, ja_substep_seq)` (3 cycles × 24)
+- Integer cycles to avoid bias leakage (half-integer causes 12kHz tone)
 - Phase continuity: M, H, phase fed back across samples
-- Exposed physics parameters (sliders)
+- **Stabilization**: diff_scale soft clamp on (Man_e - M_prev), sigma=1e-3
+- **Gain compensation**: +15.6 dB makeup + piecewise bias compensation
+- **UI**: Grouped controls (Gain, Bias, Stab, Physics)
 - Drive range: -18 to +29 dB
 
 ### C++ LUT Integration

@@ -1,5 +1,5 @@
 // jahysteresis.lib Prototype - Single Mode (K60 Ultra)
-// Matching C++ reference: 3 cycles × 24 = 72 substeps
+// 3 cycles × 24 = 72 substeps (integer cycles, no bias leakage)
 // With proper phase continuity across samples
 
 import("stdfaust.lib");
@@ -7,25 +7,16 @@ import("stdfaust.lib");
 //==============================================================================
 // tape_channel: Main processing function
 //==============================================================================
-tape_channel(input_gain_db, output_gain_db, drive_db, mix_val) =
+tape_channel(input_gain_db, output_gain_db, drive_db, mix_val,
+             Ms, a_density, k_pinning, c_reversibility, alpha_coupling,
+             bias_level, bias_scale, diff_scale) =
   ef.dryWetMixer(mix_val, wet_gained)
 with {
   // ===== Gains =====
   input_gain  = ba.db2linear(input_gain_db) : si.smoo;
   output_gain = ba.db2linear(output_gain_db) : si.smoo;
   drive_gain  = ba.db2linear(drive_db) : si.smoo;
-  drive_comp  = 1.0 / drive_gain;
-
-  // ===== Physics parameters (exposed) =====
-  Ms              = hslider("Ms (Saturation)", 320.0, 100.0, 1000.0, 1.0) : si.smoo;
-  a_density       = hslider("a (Density)", 720.0, 100.0, 2000.0, 1.0) : si.smoo;
-  k_pinning       = hslider("k (Pinning)", 280.0, 50.0, 1000.0, 1.0) : si.smoo;
-  c_reversibility = hslider("c (Reversibility)", 0.18, 0.0, 1.0, 0.01) : si.smoo;
-  alpha_coupling  = hslider("alpha (Coupling)", 0.015, 0.001, 0.1, 0.001) : si.smoo;
-
-  // ===== Bias parameters (exposed) =====
-  bias_level = hslider("Bias Level", 0.4, 0.0, 1.0, 0.01) : si.smoo;
-  bias_scale = hslider("Bias Scale", 11.0, 1.0, 100.0, 0.1) : si.smoo;
+  drive_comp  = (1.0 / drive_gain) * ba.db2linear(15.6);  // drive inverse + JA makeup
 
   // ===== Derived constants =====
   Ms_safe    = max(Ms, 1e-6);
@@ -34,24 +25,29 @@ with {
   inv_a_norm = 1.0 / max(a_norm, 1e-9);
   k_norm     = k_pinning / Ms_safe;
   c_norm     = c_reversibility;
-  sigma      = 1e-6;
+  sigma      = 1e-3;  // Moderate safety - keeps inv_pin finite when pin hits zero
   bias_amp   = bias_level * bias_scale;
+
+  // Bias compensation (piecewise linear from measured data)
+  // Reference: bias_amp=4.4 (bias_level=0.4, bias_scale=11) = 0dB
+  // bias_amp 0.44 → comp -8.2dB, bias_amp 10.78 → comp +6.4dB
+  // Slopes: low = 8.2/3.96 = 2.07, high = 6.4/6.38 = 1.003
+  bias_comp_db = ba.if(bias_amp < 4.4,
+                       (bias_amp - 4.4) * 2.07,
+                       (bias_amp - 4.4) * 1.003);
+  bias_comp = ba.db2linear(bias_comp_db);
 
   two_pi = 2.0 * ma.PI;
 
   // ===== K60 Ultra: 3 cycles, 24 substeps/cycle = 72 total =====
-  substep_phase = two_pi / 24.0;  // 2π per cycle / 24 substeps
+  substep_phase = two_pi / 24.0;
   inv_n = 1.0 / 72.0;
 
-  // ===== Wrap to [0, 2π) like C++: if (phase >= 2π) phase -= 2π =====
+  // ===== Wrap to [0, 2π) =====
   wrap_2pi(p) = ba.if(p >= two_pi, p - two_pi, p);
 
-  // ===== Fast tanh (matching C++) =====
-  fast_tanh(x) = clamped * (27.0 + x2) / (27.0 + 9.0 * x2)
-  with {
-    clamped = max(-3.0, min(3.0, x));
-    x2 = clamped * clamped;
-  };
+  // ===== Real tanh =====
+  ja_tanh = ma.tanh;
 
   // ===== Core JA substep =====
   ja_substep(bias_offset, M_prev, H_prev, H_audio) = M_new, H_new
@@ -61,17 +57,21 @@ with {
     He    = H_new + alpha_norm * M_prev;
 
     x_man    = He * inv_a_norm;
-    Man_e    = fast_tanh(x_man);
+    Man_e    = ja_tanh(x_man);
     Man_e2   = Man_e * Man_e;
     dMan_dH  = (1.0 - Man_e2) * inv_a_norm;
 
+    // Soft clamp on (Man_e - M_prev) to stabilize pinning term
+    diff = Man_e - M_prev;
+    diff_clamped = diff / (1.0 + abs(diff) * diff_scale);
+
     dir      = ba.if(dH >= 0.0, 1.0, -1.0);
-    pin      = dir * k_norm - alpha_norm * (Man_e - M_prev);
+    pin      = dir * k_norm - alpha_norm * diff_clamped;
     inv_pin  = 1.0 / (pin + sigma);
 
     denom     = 1.0 - c_norm * alpha_norm * dMan_dH;
     inv_denom = 1.0 / (denom + 1e-9);
-    dMdH      = (c_norm * dMan_dH + (Man_e - M_prev) * inv_pin) * inv_denom;
+    dMdH      = (c_norm * dMan_dH + diff_clamped * inv_pin) * inv_denom;
     dM_step   = dMdH * dH;
 
     M_unclamped = M_prev + dM_step;
@@ -79,7 +79,6 @@ with {
   };
 
   // ===== Substep with phase tracking =====
-  // State: (M, H, H_audio, M_sum, phase)
   ja_substep_seq(M_prev, H_prev, H_audio, M_sum_prev, phase) =
     M_new, H_new, H_audio, M_sum_new, phase_wrapped
   with {
@@ -94,15 +93,11 @@ with {
   };
 
   // ===== 72 substeps via seq =====
-  // Output order: M_final, H_final, phase_final, M_sum
-  // First 3 are for feedback, last is for averaging
   ja_loop_72(M_prev, H_prev, H_audio, phi_start) =
     M_prev, H_prev, H_audio, 0.0, phi_start : seq(i, 72, ja_substep_seq)
     <: ba.selector(0, 5), ba.selector(1, 5), ba.selector(4, 5), ba.selector(3, 5);
-  // [0]=M_final, [1]=H_final, [2]=phase_final, [3]=M_sum
 
   // ===== Main loop with M, H, and phase feedback =====
-  // Feedback takes first 3 outputs (M, H, phase), M_sum is position 3
   ja_hysteresis(H_in) = (loop ~ (mem, mem, mem)) : ba.selector(3, 4) : *(inv_n)
   with {
     loop(recM, recH, recPhi) = recM, recH, H_in, recPhi : ja_loop_72;
@@ -117,21 +112,39 @@ with {
     : *(drive_gain)
     : ja_hysteresis
     : dc_blocker
-    : *(drive_comp);
+    : *(drive_comp)
+    : *(bias_comp);
 
   wet_gained = tape_stage : *(output_gain);
 };
 
 //==============================================================================
-// tape_channel_ui: UI wrapper
+// tape_channel_ui: UI wrapper with all controls
 //==============================================================================
 tape_channel_ui =
-  tape_channel(input_gain_db, output_gain_db, drive_db, mix)
+  tape_channel(input_gain_db, output_gain_db, drive_db, mix,
+               Ms, a_density, k_pinning, c_reversibility, alpha_coupling,
+               bias_level, bias_scale, diff_scale)
 with {
-  input_gain_db  = hslider("Input Gain [dB]", 0.0, -24.0, 24.0, 0.1);
-  output_gain_db = hslider("Output Gain [dB]", 15.5, -24.0, 48.0, 0.1);
-  drive_db       = hslider("Drive [dB]", 0.0, -18.0, 29.0, 0.1);
-  mix            = hslider("Mix [Dry->Wet]", 1.0, 0.0, 1.0, 0.01);
+  // Group 1: GAIN
+  input_gain_db  = hgroup("JA", hgroup("[01] GAIN", vslider("[0]Input [dB]", 0.0, -24.0, 24.0, 0.1)));
+  output_gain_db = hgroup("JA", hgroup("[01] GAIN", vslider("[1]Output [dB]", 0.0, -24.0, 24.0, 0.1)));
+  drive_db       = hgroup("JA", hgroup("[01] GAIN", vslider("[2]Drive [dB]", 0.0, -18.0, 29.0, 0.1)));
+  mix            = hgroup("JA", hgroup("[01] GAIN", vslider("[3]Mix", 1.0, 0.0, 1.0, 0.01)));
+
+  // Group 2: BIAS
+  bias_level = hgroup("JA", hgroup("[02] BIAS", vslider("[0]Level", 0.4, 0.0, 1.0, 0.01)));
+  bias_scale = hgroup("JA", hgroup("[02] BIAS", vslider("[1]Scale", 11.0, 1.0, 100.0, 0.1)));
+
+  // Group 3: STABILIZATION
+  diff_scale = hgroup("JA", hgroup("[03] STAB", vslider("[0]Diff Scale", 1.0, 0.0, 4.0, 0.01)));
+
+  // Group 4: PHYSICS
+  Ms              = hgroup("JA", hgroup("[04] PHYSICS", vslider("[0]Ms", 320.0, 100.0, 1000.0, 1.0)));
+  a_density       = hgroup("JA", hgroup("[04] PHYSICS", vslider("[1]a", 720.0, 100.0, 2000.0, 1.0)));
+  k_pinning       = hgroup("JA", hgroup("[04] PHYSICS", vslider("[2]k", 280.0, 50.0, 1000.0, 1.0)));
+  c_reversibility = hgroup("JA", hgroup("[04] PHYSICS", vslider("[3]c", 0.18, 0.0, 1.0, 0.01)));
+  alpha_coupling  = hgroup("JA", hgroup("[04] PHYSICS", vslider("[4]alpha", 0.015, 0.001, 0.1, 0.001)));
 };
 
 process = par(i, 2, tape_channel_ui);

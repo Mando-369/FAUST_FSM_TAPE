@@ -1,6 +1,6 @@
 # FAUST JA Hysteresis Library — Current Status
 
-**Last updated**: 2025-12-06
+**Last updated**: 2025-12-07
 **Collaborators**: Thomas Mandolini (OmegaDSP), GRAME (Stéphane Letz)
 
 ---
@@ -24,10 +24,10 @@ Create a reusable **FAUST library (`jahysteresis.lib`)** for Jiles-Atherton magn
 | JA physics model | Complete | Ms=320, a=720, k=280, c=0.18, α=0.015 |
 | Phase-locked bias oscillator | Complete | Fixed cycles/sample, sample-rate invariant |
 | 2D LUT optimization | Complete | 1 real substep + LUT lookup |
-| 10 bias modes (K28-K2101) | Complete | LoFi to beyond-physical range (all half-integer cycles) |
+| 10 bias modes (K28-K2101) | Complete | LoFi to beyond-physical range (integer cycles) |
 | FAUST prototype (ba.if) | Complete | `dev/ja_streaming_bias_proto.dsp` |
 | FAUST prototype (ondemand) | Complete | `dev/ja_streaming_bias_proto_OD_72.dsp` |
-| FAUST full-physics proto | Complete | `dev/jahysteresislib_proto.dsp` (K60 Ultra, 72 substeps) |
+| FAUST full-physics proto | Complete | `dev/jahysteresislib_proto.dsp` (K60 Ultra, 72 substeps, stabilized) |
 | FAUST library | In Progress | `jahysteresis.lib` (contribution-ready) |
 | C++ reference (original) | Complete | `JAHysteresisScheduler` with ~11% CPU |
 | C++ reference (LUT) | Complete | `JAHysteresisSchedulerLUT` with <1% CPU expected |
@@ -50,22 +50,31 @@ Create a reusable **FAUST library (`jahysteresis.lib`)** for Jiles-Atherton magn
 
 **Result**: Collapsed 66 JA physics evaluations to 1 + cheap bilinear interpolation.
 
-### Full-Physics Prototype (2025-12-06)
+### Full-Physics Prototype (2025-12-07)
 
-New prototype `dev/jahysteresislib_proto.dsp` implements **exact C++ reference matching**:
+Prototype `dev/jahysteresislib_proto.dsp` — production-ready full-physics implementation:
 
-- **Mode**: K60 Ultra (3 cycles × 24 substeps = 72 total)
+- **Mode**: K60 Ultra (3 cycles × 24 substeps = 72 total, integer cycles)
 - **Physics**: Full JA computation for all 72 substeps via `seq(i, 72, ja_substep_seq)`
 - **Phase continuity**: M, H, and phase fed back across samples (3-way feedback loop)
-- **Matching C++**: fast_tanh with ±3 clamp, inv_a_norm safety guard, wrap_2pi after each substep
+- **tanh**: Real `ma.tanh` (not fast_tanh with ±3 clamp)
 
-**Key fixes implemented**:
-1. Phase wrapped inside substep loop (like C++ `if (phase >= 2π) phase -= 2π`)
-2. Correct feedback order: `[M, H, phase, M_sum]` with first 3 for feedback
-3. Exposed physics parameters: Ms, a, k, c, α, bias_level, bias_scale
+**Stabilization** (prevents runaway at high drive):
+- `diff_scale`: Soft clamp on (Man_e - M_prev) via `diff / (1 + |diff| * scale)`
+- `sigma = 1e-3`: Prevents 1/(pin+σ) from spiking when pin crosses zero
+
+**Gain compensation**:
+- Drive compensation: inverse drive + 15.6 dB makeup for JA level drop
+- Bias compensation: piecewise linear based on bias_amp (reference: bias_amp=4.4 = 0dB)
+
+**UI groups** (all vsliders in hgroups):
+- [01] GAIN: Input, Output, Drive, Mix
+- [02] BIAS: Level, Scale
+- [03] STAB: Diff Scale
+- [04] PHYSICS: Ms, a, k, c, alpha
 
 **Parameters**:
-- Input/Output/Drive gain controls
+- Input/Output: -24 to +24 dB
 - Drive range: -18 to +29 dB
 - DC blocker: 10 Hz, Q=0.74
 
@@ -107,22 +116,24 @@ loop(0, H) = clk(0) : ondemand(loopK(H, ja_loop60, ...));  // ja_loop60 = seq(i,
 // -> generates invalid C++ with undeclared fTempXXSE variables
 ```
 
-### 2. Harmonic Imprint Research (Priority: High) — SOLVED
+### 2. Harmonic Imprint Research (Priority: High) — REVISED
 
-**Solution**: All modes now use **half-integer cycles + odd substeps**. This ensures opposite bias polarity between adjacent samples, introducing even harmonics for warmer, more musical tone.
+**Finding**: Half-integer cycles cause audible 12kHz bias tone from residual phase accumulation. Reverted to integer cycles.
+
+**Current approach**: Integer cycles prevent bias leakage. Harmonics come from JA physics itself, stabilized with diff_scale soft clamp.
 
 | Mode | Cycles | Substeps | Character |
 |------|--------|----------|-----------|
-| K28 | 1.5 | 27 | Maximum grit |
-| K45 | 2.5 | 45 | Crunchy, lo-fi |
-| K63 | 3.5 | 63 | Classic tape |
-| K99 | 4.5 | 99 | Smooth warmth |
-| K121 | 5.5 | 121 | Standard (default) |
-| K187 | 8.5 | 187 | High quality |
-| K253 | 11.5 | 253 | Very detailed |
-| K495 | 22.5 | 495 | Ultra detailed |
-| K1045 | 47.5 | 1045 | Extreme |
-| K2101 | 95.5 | 2101 | Beyond physical |
+| K28 | 1 | 28 | Maximum grit |
+| K45 | 2 | 45 | Crunchy, lo-fi |
+| K63 | 3 | 63 | Classic tape |
+| K99 | 4 | 99 | Smooth warmth |
+| K121 | 5 | 121 | Standard (default) |
+| K187 | 8 | 187 | High quality |
+| K253 | 11 | 253 | Very detailed |
+| K495 | 22 | 495 | Ultra detailed |
+| K1045 | 47 | 1045 | Extreme |
+| K2101 | 95 | 2101 | Beyond physical |
 
 **Key insight**: Lower substep counts introduce inter-sample "aliasing" that manifests as characteristic harmonics — a feature for lo-fi modes, minimized in HQ modes.
 

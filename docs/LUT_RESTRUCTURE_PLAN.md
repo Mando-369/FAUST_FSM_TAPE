@@ -85,12 +85,13 @@ ja_lut_h_min = -1.0;
 ja_lut_h_max = 1.0;
 
 // Mode metadata: (substeps, inv_substeps, bias_cycles)
-// Index: K28=0, K32=1, K60=2, K90=3, K120=4, K180=5, K240=6, K480=7, K960=8, K1920=9
-ja_mode_substeps = waveform{27, 36, 66, 99, 132, 198, 264, 528, 1056, 2112};
-ja_mode_inv_substeps = waveform{0.037037, 0.027778, 0.015152, 0.010101,
-                                 0.007576, 0.005051, 0.003788, 0.001894,
-                                 0.000947, 0.000473};
-ja_mode_bias_cycles = waveform{1.5, 2.0, 3.0, 4.5, 6.0, 9.0, 12.0, 24.0, 48.0, 96.0};
+// Index: K28=0, K45=1, K63=2, K99=3, K121=4, K187=5, K253=6, K495=7, K1045=8, K2101=9
+// NOTE: Using INTEGER cycles to avoid 12kHz bias leakage (half-integer tested, failed)
+ja_mode_substeps = waveform{28, 45, 63, 99, 121, 187, 253, 495, 1045, 2101};
+ja_mode_inv_substeps = waveform{0.035714, 0.022222, 0.015873, 0.010101,
+                                 0.008264, 0.005348, 0.003953, 0.002020,
+                                 0.000957, 0.000476};
+ja_mode_bias_cycles = waveform{1, 2, 3, 4, 5, 8, 11, 22, 47, 95};
 
 // Combined M_end LUT (83850 values: 10 modes × 8385)
 ja_lut_m_end = waveform{
