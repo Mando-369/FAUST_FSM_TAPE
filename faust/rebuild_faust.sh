@@ -31,14 +31,22 @@ if [ -d "$PROJECT_DIR" ] && [ -f "$JUCER_FILE" ]; then
     echo "✓ Xcode project updated"
 
     cd "$PROJECT_DIR/Builds/MacOSX"
-    xcodebuild -project jahysteresislib_proto.xcodeproj -scheme "jahysteresislib_proto - AU" -configuration Release build | tail -3
 
-    # Install to Components folder (remove old first)
+    # Build AU
+    xcodebuild -project jahysteresislib_proto.xcodeproj -scheme "jahysteresislib_proto - AU" -configuration Release build | tail -3
     COMPONENT_SRC="build/Release/jahysteresislib_proto.component"
     COMPONENT_DST="$HOME/Library/Audio/Plug-Ins/Components/jahysteresislib_proto.component"
     rm -rf "$COMPONENT_DST"
     cp -R "$COMPONENT_SRC" "$COMPONENT_DST"
-    echo "✓ Installed to Components"
+    echo "✓ AU installed to Components"
+
+    # Build VST3
+    xcodebuild -project jahysteresislib_proto.xcodeproj -scheme "jahysteresislib_proto - VST3" -configuration Release build | tail -3
+    VST3_SRC="build/Release/jahysteresislib_proto.vst3"
+    VST3_DST="$HOME/Library/Audio/Plug-Ins/VST3/jahysteresislib_proto.vst3"
+    rm -rf "$VST3_DST"
+    cp -R "$VST3_SRC" "$VST3_DST"
+    echo "✓ VST3 installed to VST3"
 
     echo "=== Done ==="
 else
