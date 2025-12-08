@@ -41,6 +41,16 @@ faust/bugfix/*/JuceLibraryCode/
 faust/bugfix/*/*.cpp
 faust/bugfix/*/*.jucer
 
+# GRAME_BUG_ONDEMAND builds (keep .dsp and .md, ignore generated)
+faust/GRAME_BUG_ONDEMAND/*/
+!faust/GRAME_BUG_ONDEMAND/*.dsp
+!faust/GRAME_BUG_ONDEMAND/*.md
+faust/GRAME_BUG_ONDEMAND/*.cpp
+
+# Generic JUCE/faust2juce generated folders (catch-all)
+**/Builds/
+**/JuceLibraryCode/
+
 # C++ reference (ignore duplicate LUT files)
 cpp_reference/LUT_files/
 

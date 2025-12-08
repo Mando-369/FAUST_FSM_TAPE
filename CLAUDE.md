@@ -68,7 +68,7 @@ cd scripts && python3 generate_ja_lut.py --mode K121 --variants --output-dir ../
 
 | Aspect | FAUST (LUT-optimized) | FAUST (full-physics) | C++ (original) |
 |--------|----------------------|----------------------|----------------|
-| Location | `faust/jahysteresis.lib` | `faust/dev/jahysteresislib_proto.dsp` | `cpp_reference/JAHysteresisScheduler.*` |
+| Location | `faust/jahysteresis.lib` | `faust/dev/lib_latest_proto/jahysteresislib_proto.dsp` | `cpp_reference/JAHysteresisScheduler.*` |
 | Mode | 10 modes (K28-K2101) | K60 Ultra (72 substeps) | K32/K48/K60 × Eco/Normal/Ultra |
 | Substeps | 1 real + LUT lookup | Full 72 via `seq` | Full loop |
 | tanh | Real `ma.tanh` | Real `ma.tanh` | `fast_tanh` (±3 clamp) |
@@ -78,7 +78,7 @@ All implementations use identical physics: Ms=320, a=720, k=280, c=0.18, α=0.01
 
 ### Full-Physics Prototype
 
-`faust/dev/jahysteresislib_proto.dsp` - K60 Ultra single mode:
+`faust/dev/lib_latest_proto/jahysteresislib_proto.dsp` - K60 Ultra single mode:
 - 72 substeps via `seq(i, 72, ja_substep_seq)` (3 cycles × 24)
 - Integer cycles to avoid bias leakage (half-integer causes 12kHz tone)
 - Phase continuity: M, H, phase fed back across samples
@@ -127,7 +127,7 @@ cd scripts && python3 generate_ja_lut.py --mode K121 --bias-level 0.41 --output-
 
 The `ondemand` primitive eliminates parallel computation overhead by only computing the active mode branch.
 
-**Prototype**: `faust/test/ja_streaming_bias_proto_od.dsp`
+**Bug report and test files**: `faust/GRAME_BUG_ONDEMAND/`
 
 **Note**: The dev fork is **not in git** (too large). Install manually:
 ```bash
@@ -139,7 +139,7 @@ cd tools/faust-ondemand/build && make
 
 ```bash
 # Compile DSP to C++
-./tools/faust-ondemand/build/bin/faust faust/test/ja_streaming_bias_proto_od.dsp -o faust/test/TestOD.cpp
+./tools/faust-ondemand/build/bin/faust faust/GRAME_BUG_ONDEMAND/ja_streaming_bias_proto_od.dsp -o test.cpp
 
 # Build AU plugin (from project root)
 bash -c 'export PATH="$(pwd)/tools/faust-ondemand/build/bin:$PATH" && \
@@ -148,14 +148,7 @@ export FAUSTLIB="$(pwd)/tools/faust-ondemand/share/faust" && \
 export FAUSTINC="$(pwd)/tools/faust-ondemand/architecture" && \
 $(pwd)/tools/faust-ondemand/tools/faust2appls/faust2juce \
   -jucemodulesdir $(pwd)/JUCE/modules \
-  faust/test/ja_streaming_bias_proto_od.dsp'
-
-# Generate Xcode project and build
-JUCE/extras/Projucer/Builds/MacOSX/build/Release/Projucer.app/Contents/MacOS/Projucer \
-  --resave faust/test/ja_streaming_bias_proto_od/ja_streaming_bias_proto_od.jucer
-
-xcodebuild -project faust/test/ja_streaming_bias_proto_od/Builds/MacOSX/ja_streaming_bias_proto_od.xcodeproj \
-  -scheme "ja_streaming_bias_proto_od - AU" -configuration Release build
+  faust/GRAME_BUG_ONDEMAND/ja_streaming_bias_proto_od.dsp'
 ```
 
 Plugin installs to `~/Library/Audio/Plug-Ins/Components/`.
@@ -171,17 +164,21 @@ FAUST_FSM_TAPE/
 │   ├── JAHysteresisLUT_K*.h        # C++ LUT headers (all 10 modes)
 │   ├── rebuild_faust.sh            # Rebuild without changing plugin IDs
 │   ├── dev/
-│   │   ├── ja_streaming_bias_proto.dsp       # Working prototype (ba.if version)
-│   │   ├── ja_streaming_bias_proto_OD_72.dsp # 72-substep ondemand prototype
-│   │   ├── jahysteresislib_proto.dsp         # Full-physics K60 Ultra (C++ match)
-│   │   └── test_gated_substeps.dsp           # Gated substeps test
+│   │   ├── lib_latest_proto/              # Latest full-physics prototype
+│   │   │   └── jahysteresislib_proto.dsp  # K60 Ultra (C++ match)
+│   │   └── dev_old/                       # Archived prototypes
 │   ├── test/
-│   │   ├── test_gated_substeps.dsp           # Ondemand gating tests
-│   │   └── ja_lut_k*.lib                     # LUTs for test builds
+│   │   ├── test_var_subst_lut.dsp      # Variable substep LUT test
+│   │   ├── ja_lut_k*.lib               # LUTs for test builds
+│   │   └── test_old/                   # Archived tests
+│   ├── GRAME_BUG_ONDEMAND/             # Ondemand bug reproduction files
+│   │   ├── GRAME_ONDEMAND_BUG_REPORT.md
+│   │   ├── ja_streaming_bias_proto_od.dsp      # Working (LUT-based)
+│   │   └── jaStreamingBiasProtoOD24.dsp        # Failing (complex seq)
 │   └── examples/
 │       └── jah_tape_demo.dsp       # Demo importing jahysteresis.lib
 ├── cpp_reference/
-│   ├── JAHysteresisScheduler.*     # Original C++ scheduler (~11% CPU)
+│   ├── JAHysteresisScheduler.*     # Original C++ scheduler (~2% CPU)
 │   ├── JAHysteresisSchedulerLUT.*  # LUT-optimized C++ scheduler (<1% CPU)
 │   └── JAHysteresisSchedulerLUT_README.md  # Integration guide
 ├── juce_plugin/
@@ -194,9 +191,8 @@ FAUST_FSM_TAPE/
 │   └── faust-ondemand/             # Dev fork with ondemand primitive
 └── docs/
     ├── CURRENT_STATUS.md           # Project status and open problems
-    ├── JA_LUT_NONLINEARITY.md      # LUT enhancement options for responsiveness
-    ├── GRAME_ONDEMAND_BUG_REPORT.md # Ondemand primitive bug report
-    └── LUT_RESTRUCTURE_PLAN.md     # Unified LUT optimization plan
+    ├── JA_LUT_NONLINEARITY.md      # LUT enhancement options
+    └── VARIABLE_SUBSTEP_LUT_PLAN.md # Variable substep LUT design
 ```
 
 ## Plugin IDs (Don't Change!)

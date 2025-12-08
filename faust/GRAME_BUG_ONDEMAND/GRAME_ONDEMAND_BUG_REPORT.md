@@ -1,9 +1,21 @@
 # Ondemand Primitive Bug Report for GRAME
 
-**Date**: 2025-11-30 (Updated: 2025-12-01)
+**Date**: 2025-11-30 (Updated: 2025-12-08)
 **Reporter**: Thomas Mandolini (OmegaDSP)
 **Faust Fork**: `master-dev-ocpp-od-fir-2-FIR13` (ondemand branch)
 **Repository**: https://github.com/grame-cncm/faust (dev fork)
+
+---
+
+## Files
+
+All ondemand bug reproduction files are in `faust/GRAME_BUG_ONDEMAND/`:
+
+| File | Description | Status |
+|------|-------------|--------|
+| `ja_streaming_bias_proto_od.dsp` | LUT-based, runtime clock | **Working** |
+| `jaStreamingBiasProtoOD24.dsp` | Complex seq, runtime clock | **Failing** |
+| `jaStreamingBiasProtoOD24/` | Generated JUCE project with failing C++ | - |
 
 ---
 
@@ -26,6 +38,7 @@ The real bug: `ondemand` generates invalid C++ code (undeclared `fTempXXSE` vari
 - **Faust fork**: `tools/faust-ondemand/` (commit from master-dev-ocpp-od-fir-2-FIR13)
 - **Compile flags**: `-double`
 - **Target**: JUCE AU plugin via `faust2juce`
+- **DAW**: Reaper
 
 ---
 
@@ -33,7 +46,7 @@ The real bug: `ondemand` generates invalid C++ code (undeclared `fTempXXSE` vari
 
 ### Working: LUT-based prototype
 
-**File**: `faust/test/ja_streaming_bias_proto_od.dsp`
+**File**: `faust/GRAME_BUG_ONDEMAND/ja_streaming_bias_proto_od.dsp`
 
 ```faust
 // Simple operations inside ondemand - LUT lookups
@@ -58,7 +71,7 @@ with { ... };
 
 ### Failing: Full substep computation
 
-**File**: `faust/dev/jaStreamingBiasProtoOD24.dsp`
+**File**: `faust/GRAME_BUG_ONDEMAND/jaStreamingBiasProtoOD24.dsp`
 
 ```faust
 // Complex seq chain inside ondemand - full JA physics per substep
@@ -229,17 +242,16 @@ The phase-locked "stroboscopic" algorithm itself is fine in FAUST:
 
 | File | Description | CPU | Status |
 |------|-------------|-----|--------|
-| `faust/dev/ja_streaming_bias_proto_OD_24.dsp` | Full 60-step chain, each `ja_step_sc` written explicitly | ~24 % | Compiles & runs |
-| `faust/test/ja_streaming_bias_proto_od.dsp` | 1 real JA step + LUT lookup per sample | <1 % | Compiles & runs |
-| `faust/dev/test_gated_substeps.dsp` | Prototype that wraps `seq(i, N, gated_substep)` where `gated_substep` uses `clk : ondemand(...)` to skip inactive substeps | N/A | Compiler hangs (killed with `Signal 14`) |
+| `ja_streaming_bias_proto_od.dsp` | 1 real JA step + LUT lookup | <1% | Works |
+| `jaStreamingBiasProtoOD24.dsp` | Complex seq + runtime clock | N/A | Fails (invalid C++) |
 
 Key observations from `test_gated_substeps.dsp`:
 
-1. Replacing the ondemand call with a direct `ja_physics` invocation (same `seq` structure) compiles instantly → no algebraic loop in the DSP graph.
-2. Keeping ondemand but manually unrolling a fixed number of gated stages (no `seq`) also compiles → runtime gating itself is OK.
-3. Only the combination “`seq` + runtime index + `clk : ondemand(...)`” triggers the hang; the ondemand compiler prints thousands of “slot … used in clockenv …” warnings and never emits C++ before the watchdog kills it.
+1. Replacing the ondemand call with a direct `ja_physics` invocation (same `seq` structure) compiles instantly -> no algebraic loop in the DSP graph.
+2. Keeping ondemand but manually unrolling a fixed number of gated stages (no `seq`) also compiles -> runtime gating itself is OK.
+3. Only the combination "`seq` + runtime index + `clk : ondemand(...)`" triggers the hang; the ondemand compiler prints thousands of "slot ... used in clockenv ..." warnings and never emits C++ before the watchdog kills it.
 
-So the regression is not with the JA physics or the stroboscopic math; it is specifically the ondemand compiler’s clock-environment analysis when a `seq` chain feeds an ondemand-gated block.
+So the regression is not with the JA physics or the stroboscopic math; it is specifically the ondemand compiler's clock-environment analysis when a `seq` chain feeds an ondemand-gated block.
 
 ---
 
@@ -256,21 +268,13 @@ export FAUSTLIB="$(pwd)/tools/faust-ondemand/share/faust"
 export FAUSTINC="$(pwd)/tools/faust-ondemand/architecture"
 
 # This works:
-faust -double faust/test/ja_streaming_bias_proto_od.dsp -o test_ok.cpp
+faust -double faust/GRAME_BUG_ONDEMAND/ja_streaming_bias_proto_od.dsp -o test_ok.cpp
 
 # This generates invalid C++:
-faust -double faust/dev/jaStreamingBiasProtoOD24.dsp -o test_fail.cpp
+faust -double faust/GRAME_BUG_ONDEMAND/jaStreamingBiasProtoOD24.dsp -o test_fail.cpp
 ```
 
 4. Try to compile `test_fail.cpp` - will fail with undeclared identifier errors
-
----
-
-## Files
-
-- **Working DSP**: `faust/test/ja_streaming_bias_proto_od.dsp`
-- **Failing DSP**: `faust/dev/jaStreamingBiasProtoOD24.dsp`
-- **Generated C++ (failing)**: `faust/dev/jaStreamingBiasProtoOD24/FaustPluginProcessor.cpp`
 
 ---
 
@@ -282,11 +286,11 @@ Use **compile-time clock** by passing `i` from `seq` to the gated function:
 gated_substep(i, ...) = ... with { clk = (i < N); ... : ondemand(...) };
 seq(i, MAX_STEPS, gated_substep(i))
 ```
-See `faust/dev/test_gated_substeps.dsp` for working 72-substep implementation.
+See `faust/dev/dev_old/` for working 72-substep implementation prototypes.
 
 ### For mode selection with runtime UI control:
 Use simple operations inside ondemand (LUT lookups work, complex seq chains don't).
-See `faust/test/ja_streaming_bias_proto_od.dsp` for working LUT-based approach.
+See `faust/GRAME_BUG_ONDEMAND/ja_streaming_bias_proto_od.dsp` for working LUT-based approach.
 
 ---
 

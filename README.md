@@ -80,12 +80,12 @@ cmake -S . -B build -G Xcode && cmake --build build --config Release
 
 Both plugins use identical physics, DC blocker (SVF TPT 10 Hz), and parameter ranges.
 
-**CPU load (M4 Max, Ableton Live 12.3, AU):**
+**CPU load (M4 Max, Reaper, AU/VST3):**
 | Implementation | CPU |
 |----------------|-----|
-| FAUST original (66 substeps) | ~24% |
-| C++ scheduler | ~11% |
-| FAUST + LUT optimization | ~1% |
+| FAUST full-physics (72 substeps) | ~2% |
+| C++ scheduler | ~2% |
+| FAUST + LUT optimization | <1% |
 
 **Key difference:** C++ uses fractional substep accumulation (variable 35-37 steps), FAUST uses fixed unrolled chains (exactly 36/54/66). This causes subtle high-frequency response differences when bias is active.
 
@@ -93,7 +93,7 @@ Both plugins use identical physics, DC blocker (SVF TPT 10 Hz), and parameter ra
 
 ### Full-Physics Prototype
 
-`faust/dev/jahysteresislib_proto.dsp` — Production-ready full-physics implementation:
+`faust/dev/lib_latest_proto/jahysteresislib_proto.dsp` — Production-ready full-physics implementation:
 - K60 Ultra (72 substeps, 3 cycles × 24)
 - Stabilization: diff_scale soft clamp, sigma=1e-3
 - Gain compensation: +15.6 dB makeup + piecewise bias compensation
