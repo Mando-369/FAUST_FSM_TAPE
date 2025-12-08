@@ -1,13 +1,15 @@
 // jahysteresis.lib Prototype - Single Mode (K60 Ultra)
+// Jiles-Atherton model of ferromagnetic hysteresis — a physically-based
+// mathematical description relating magnetization (M) to applied field (H).
+// Combined with phase-locked bias oscillator for analog tape emulation.
 // 3 cycles × 24 = 72 substeps (integer cycles, no bias leakage)
-// With proper phase continuity across samples
 
 import("stdfaust.lib");
 
 //==============================================================================
-// tape_channel: Main processing function
+// fsm_channel: Main processing function
 //==============================================================================
-tape_channel(input_gain_db, output_gain_db, drive_db, mix_val,
+fsm_channel(input_gain_db, output_gain_db, drive_db, mix_val,
              Ms, a_density, k_pinning, c_reversibility, alpha_coupling,
              bias_level, bias_scale, diff_scale) =
   ef.dryWetMixer(mix_val, wet_gained)
@@ -106,8 +108,8 @@ with {
   // ===== DC blocker =====
   dc_blocker = fi.SVFTPT.HP2(10.0, 0.74);
 
-  // ===== Tape stage =====
-  tape_stage(x) =
+  // ===== FSM stage =====
+  fsm_stage(x) =
     x * input_gain
     : *(drive_gain)
     : ja_hysteresis
@@ -115,14 +117,14 @@ with {
     : *(drive_comp)
     : *(bias_comp);
 
-  wet_gained = tape_stage : *(output_gain);
+  wet_gained = fsm_stage : *(output_gain);
 };
 
 //==============================================================================
-// tape_channel_ui: UI wrapper with all controls
+// fsm_channel_ui: UI wrapper with all controls
 //==============================================================================
-tape_channel_ui =
-  tape_channel(input_gain_db, output_gain_db, drive_db, mix,
+fsm_channel_ui =
+  fsm_channel(input_gain_db, output_gain_db, drive_db, mix,
                Ms, a_density, k_pinning, c_reversibility, alpha_coupling,
                bias_level, bias_scale, diff_scale)
 with {
@@ -147,4 +149,4 @@ with {
   alpha_coupling  = hgroup("JA", hgroup("[04] PHYSICS", vslider("[4]alpha", 0.015, 0.001, 0.1, 0.001)));
 };
 
-process = par(i, 2, tape_channel_ui);
+process = par(i, 2, fsm_channel_ui);

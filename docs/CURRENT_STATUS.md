@@ -7,7 +7,7 @@
 
 ## Project Goal
 
-Create a reusable **FAUST library (`jahysteresis.lib`)** for Jiles-Atherton magnetic hysteresis with phase-locked bias oscillator, suitable for tape saturation simulation.
+Create a reusable **FAUST library (`jahysteresis.lib`)** implementing the Jiles-Atherton model of ferromagnetic hysteresis — a physically-based description relating magnetization (M) to applied field (H) — with phase-locked bias oscillator for analog tape emulation.
 
 **Target**: Mastering-grade quality at production-viable CPU cost.
 

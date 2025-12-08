@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-GRAME collaboration repository: Jiles-Atherton magnetic hysteresis for tape saturation.
+GRAME collaboration repository: Jiles-Atherton model of ferromagnetic hysteresis with phase-locked bias oscillator for analog tape emulation.
 Goal: optimize algorithm, create `jahysteresis.lib` library for GRAME contribution.
 
 **Parent project**: FSM_TAPE (full plugin)

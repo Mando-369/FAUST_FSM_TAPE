@@ -1,27 +1,27 @@
 //############### jahysteresis.lib ##################
 // Jiles-Atherton Magnetic Hysteresis Library
 //
-// A FAUST library for tape saturation simulation based on the Jiles-Atherton
-// model of ferromagnetic hysteresis with phase-locked bias oscillator.
-// Uses 2D LUT optimization for production-viable CPU cost.
+// A FAUST library implementing the Jiles-Atherton model of ferromagnetic
+// hysteresis - a physically-based mathematical description relating
+// magnetization (M) to applied field (H). Combined with a phase-locked bias
+// oscillator for analog tape emulation applications.
 //
-// * Tape Channel Processing
-// * JA Hysteresis Core
-// * LUT-Accelerated Modes (K28-K1920)
+// Full-physics implementation with runtime-adjustable parameters.
+// Single mode: K60 Ultra (72 substeps, 3 integer cycles).
+// CPU cost: ~2%.
+//
+// For the LUT-optimized multi-mode version (<1% CPU), see `jahysteresis_lite.lib`.
+//
+// * Physics Constants
+// * JA Core Functions
+// * Streaming Hysteresis
+// * FSM Channel Processing
 //
 // It should be used using the `jah` environment:
 //
 // ```
 // jah = library("jahysteresis.lib");
-// process = jah.tape_channel_ui;
-// ```
-//
-// Another option is to import `stdfaust.lib` which already contains the `jah`
-// environment:
-//
-// ```
-// import("stdfaust.lib");
-// process = jah.tape_channel_ui;
+// process = jah.fsm_channel_ui;
 // ```
 //
 // #### References
@@ -33,22 +33,79 @@
 //##################################################
 
 declare name "Jiles-Atherton Hysteresis Library";
-declare version "0.1.0";
+declare version "1.0.0";
 declare author "Thomas Mandolini";
 declare license "BSD";
 declare copyright "2025 Thomas Mandolini";
 
 // Its official prefix is `jah`.
 
-//======================== Tape Channel Processing ========================
-// Complete tape channel with drive, bias mode selection, and wet/dry mix.
-//=========================================================================
+//================= Physics Constants ===============
+// Default Jiles-Atherton model parameters.
+// Ms = saturation magnetization, a = domain density,
+// k = pinning (coercivity), c = reversibility, alpha = interdomain coupling.
+//===================================================
 
-//======================== JA Hysteresis Core =============================
-// Core Jiles-Atherton physics implementation with Newton-Raphson solver.
-//=========================================================================
+//================= JA Core Functions ===============
+// Core Jiles-Atherton physics implementation.
+// Full computation for all substeps (no LUT).
+//===================================================
 
-//======================== LUT-Accelerated Modes ==========================
-// 2D lookup tables for substeps 1..N-1 (only substep 0 computed real-time).
-// Available modes: K28, K32, K60, K90, K120, K180, K240, K480, K960, K1920.
-//=========================================================================
+//================= Streaming Hysteresis ===============
+// Phase-locked bias oscillator with full JA computation.
+// K60 Ultra mode: 3 cycles x 24 substeps = 72 total.
+//======================================================
+
+//================= FSM Channel Processing ===============
+// Full Spectrum Magnetization channel with gain staging, drive, and mix.
+//========================================================
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// jahysteresis_lite.lib - LUT-Optimized Version
+//
+////////////////////////////////////////////////////////////////////////////////
+
+//############### jahysteresis_lite.lib ##################
+// Jiles-Atherton Magnetic Hysteresis Library (LUT-Optimized)
+//
+// A FAUST library implementing the Jiles-Atherton model of ferromagnetic
+// hysteresis - a physically-based mathematical description relating
+// magnetization (M) to applied field (H). Combined with a phase-locked bias
+// oscillator for analog tape emulation applications.
+//
+// This is the **LUT-optimized** version with 10 selectable modes (K28-K2101).
+// Uses 2D LUT optimization: 1 real substep + LUT lookup for the rest.
+// CPU cost: <1% (vs ~2% for full-physics version).
+//
+// For the full-physics version with runtime-adjustable parameters,
+// see `jahysteresis.lib`.
+//
+// * Physics Constants
+// * Bias Oscillator Tables
+// * JA Core Functions
+// * LUT-Accelerated Loops (K28-K2101)
+// * FSM Channel Processing
+//
+// It should be used using the `jah` environment:
+//
+// ```
+// jah = library("jahysteresis_lite.lib");
+// process = jah.fsm_channel_ui;
+// ```
+//
+// #### References
+//
+// * Jiles, D.C. and Atherton, D.L. (1986) "Theory of ferromagnetic hysteresis"
+// * Walters, S.J. "Full Spectrum Magnetization" (phase-locked bias oscillator)
+// * <https://github.com/Mando-369/FAUST_FSM_TAPE>
+//
+//######################################################
+
+declare name "Jiles-Atherton Hysteresis Library (LUT-Optimized)";
+declare version "0.4.0";
+declare author "Thomas Mandolini";
+declare license "BSD";
+declare copyright "2025 Thomas Mandolini";
+
+// Its official prefix is `jah`.

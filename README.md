@@ -1,6 +1,6 @@
 # FAUST_FSM_TAPE - Jiles-Atherton Magnetic Hysteresis
 
-FAUST implementation of the Jiles-Atherton (JA) magnetic hysteresis model with phase-locked bias oscillator for tape saturation simulation.
+FAUST implementation of the Jiles-Atherton (JA) model of ferromagnetic hysteresis — a physically-based mathematical description relating magnetization (M) to applied field (H). Combined with a phase-locked bias oscillator for analog tape emulation.
 
 **Author**: Thomas Mandolini / OmegaDSP
 **Contact**: thomas.mand0369@gmail.com

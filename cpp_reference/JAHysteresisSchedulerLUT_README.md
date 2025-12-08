@@ -1,6 +1,6 @@
 # JAHysteresisSchedulerLUT - Integration Guide
 
-LUT-optimized JA hysteresis scheduler for tape saturation.
+LUT-optimized scheduler implementing the Jiles-Atherton model of ferromagnetic hysteresis for analog tape emulation.
 **CPU reduction: ~11% → ~1%**
 
 ## Files Required

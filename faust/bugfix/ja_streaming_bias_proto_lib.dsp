@@ -2,8 +2,10 @@
 //############### jahysteresis.lib ##################
 // Jiles-Atherton Magnetic Hysteresis Library
 //
-// A FAUST library for tape saturation simulation based on the Jiles-Atherton
-// model of ferromagnetic hysteresis with phase-locked bias oscillator.
+// A FAUST library implementing the Jiles-Atherton model of ferromagnetic
+// hysteresis — a physically-based mathematical description relating
+// magnetization (M) to applied field (H). Combined with a phase-locked bias
+// oscillator for analog tape emulation applications.
 // Uses 2D LUT optimization for production-viable CPU cost (<1% vs ~24% original).
 //
 // All modes use half-integer bias cycles + odd substeps for rich harmonic content.
