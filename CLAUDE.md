@@ -69,23 +69,27 @@ cd scripts && python3 generate_ja_lut.py --mode K121 --variants --output-dir ../
 | Aspect | FAUST (LUT-optimized) | FAUST (full-physics) | C++ (original) |
 |--------|----------------------|----------------------|----------------|
 | Location | `faust/jahysteresis.lib` | `faust/dev/lib_latest_proto/jahysteresislib_proto.dsp` | `cpp_reference/JAHysteresisScheduler.*` |
-| Mode | 10 modes (K28-K2101) | K60 Ultra (72 substeps) | K32/K48/K60 × Eco/Normal/Ultra |
-| Substeps | 1 real + LUT lookup | Full 72 via `seq` | Full loop |
+| Mode | 10 modes (K28-K2101) | K96 (96 substeps) | K32/K48/K60 × Eco/Normal/Ultra |
+| Substeps | 1 real + LUT lookup | Full 96 via `seq` | Full loop |
 | tanh | Real `ma.tanh` | Real `ma.tanh` | `fast_tanh` (±3 clamp) |
-| CPU | <1% | TBD | ~11% |
+| CPU | <1% | ~2% | ~2% |
 
 All implementations use identical physics: Ms=320, a=720, k=280, c=0.18, α=0.015
 
-### Full-Physics Prototype
+### Full-Physics Prototype (Recommended)
 
-`faust/dev/lib_latest_proto/jahysteresislib_proto.dsp` - K60 Ultra single mode:
-- 72 substeps via `seq(i, 72, ja_substep_seq)` (3 cycles × 24)
+`faust/dev/lib_latest_proto/jahysteresislib_proto.dsp` - K96 single mode:
+- 96 substeps via `seq(i, 96, ja_substep_seq)` (4 cycles × 24)
 - Integer cycles to avoid bias leakage (half-integer causes 12kHz tone)
 - Phase continuity: M, H, phase fed back across samples
 - **Stabilization**: diff_scale soft clamp on (Man_e - M_prev), sigma=1e-3
+- **Bias Asymmetry**: `sin(phase) + bias_asym * sin(2*phase)` for 2nd harmonic (warmth)
 - **Gain compensation**: +15.6 dB makeup + piecewise bias compensation
-- **UI**: Grouped controls (Gain, Bias, Stab, Physics)
-- Drive range: -18 to +29 dB
+- **UI**: Grouped controls (Gain, Bias [Level/Scale/Asym], Stab, Physics)
+- Drive range: -18 to +29 dB, Bias Asym: 0-0.5
+- **CPU**: ~2% — sounds perfect, full parameter control
+
+**Note**: Hybrid LUT (50% real + 50% LUT) was tested but NOT recommended — only saves 0.3-0.5% CPU due to Catmull-Rom interpolation overhead. See `docs/CURRENT_STATUS.md` for details.
 
 ### C++ LUT Integration
 
@@ -165,12 +169,14 @@ FAUST_FSM_TAPE/
 │   ├── rebuild_faust.sh            # Rebuild without changing plugin IDs
 │   ├── dev/
 │   │   ├── lib_latest_proto/              # Latest full-physics prototype
-│   │   │   └── jahysteresislib_proto.dsp  # K60 Ultra (C++ match)
+│   │   │   └── jahysteresislib_proto.dsp  # K96 with bias asymmetry (production-ready)
 │   │   └── dev_old/                       # Archived prototypes
 │   ├── test/
-│   │   ├── test_var_subst_lut.dsp      # Variable substep LUT test
-│   │   ├── ja_lut_k*.lib               # LUTs for test builds
-│   │   └── test_old/                   # Archived tests
+│   │   ├── test_mode3_bias_asym.dsp       # K96 single-mode test
+│   │   ├── test_mode3_bias_asym_hybrid.dsp # Hybrid 50/50 test (not recommended)
+│   │   ├── test_var_subst_lut.dsp         # Variable substep LUT test
+│   │   ├── ja_lut_k*.lib                  # LUTs for test builds
+│   │   └── test_old/                      # Archived tests
 │   ├── GRAME_BUG_ONDEMAND/             # Ondemand bug reproduction files
 │   │   ├── GRAME_ONDEMAND_BUG_REPORT.md
 │   │   ├── ja_streaming_bias_proto_od.dsp      # Working (LUT-based)

@@ -71,10 +71,12 @@ class ModeConfigVariant(NamedTuple):
 
 # Mode configurations
 # Pattern: half-integer cycles + odd substeps = rich harmonic content
+# Integer cycles avoid bias leakage (12kHz tone)
 MODES = {
     'K28': ModeConfig('K28', 1.5, 18),
     'K45': ModeConfig('K45', 2.5, 18),
     'K63': ModeConfig('K63', 3.5, 18),
+    'K96': ModeConfig('K96', 4.0, 24),   # 4 integer cycles × 24 = 96 (no bias leakage)
     'K99': ModeConfig('K99', 4.5, 22),
     'K121': ModeConfig('K121', 5.5, 22),
     'K187': ModeConfig('K187', 8.5, 22),
@@ -93,7 +95,7 @@ def generate_bias_lut(phase_span: float, total_substeps: int) -> np.ndarray:
     return np.sin((indices + 0.5) * dphi)
 
 
-def get_derived_constants(physics: PhysicsParams) -> dict:
+def get_derived_constants(physics: PhysicsParams, diff_scale: float = 1.0) -> dict:
     """Compute derived constants from physics parameters"""
     Ms_safe = max(physics.Ms, 1e-6)
     a_norm = physics.a_density / Ms_safe
@@ -104,6 +106,8 @@ def get_derived_constants(physics: PhysicsParams) -> dict:
         'inv_a_norm': 1.0 / max(a_norm, 1e-9),
         'k_norm': physics.k_pinning / Ms_safe,
         'c_norm': physics.c_reversibility,
+        'diff_scale': diff_scale,  # Soft clamp on (Man_e - M) for stabilization
+        'sigma': 1e-3,  # Safety margin for pinning term (matches DSP)
     }
 
 
@@ -120,14 +124,20 @@ def ja_dMdH(M: float, H_new: float, H_prev: float, consts: dict) -> float:
     Man_e2 = Man_e * Man_e
     dMan_dH = (1.0 - Man_e2) * consts['inv_a_norm']
 
+    # Soft clamp on (Man_e - M) for stabilization (matches DSP diff_scale)
+    diff = Man_e - M
+    diff_scale = consts.get('diff_scale', 1.0)
+    diff_clamped = diff / (1.0 + abs(diff) * diff_scale)
+
     direction = 1.0 if dH >= 0.0 else -1.0
-    pin = direction * consts['k_norm'] - consts['alpha_norm'] * (Man_e - M)
-    inv_pin = 1.0 / (pin + 1e-6)
+    pin = direction * consts['k_norm'] - consts['alpha_norm'] * diff_clamped
+    sigma = consts.get('sigma', 1e-3)
+    inv_pin = 1.0 / (pin + sigma)
 
     denom = 1.0 - consts['c_norm'] * consts['alpha_norm'] * dMan_dH
     inv_denom = 1.0 / (denom + 1e-9)
 
-    return (consts['c_norm'] * dMan_dH + (Man_e - M) * inv_pin) * inv_denom
+    return (consts['c_norm'] * dMan_dH + diff_clamped * inv_pin) * inv_denom
 
 
 def ja_substep_euler(

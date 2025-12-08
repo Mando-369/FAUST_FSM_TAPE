@@ -1,13 +1,12 @@
-// jahysteresis.lib Prototype - Single Mode (K96)
-// Jiles-Atherton model of ferromagnetic hysteresis — a physically-based
-// mathematical description relating magnetization (M) to applied field (H).
-// Combined with phase-locked bias oscillator for analog tape emulation.
-// 4 cycles × 24 = 96 substeps (integer cycles, no bias leakage)
+// Test: Single Mode 3 (96 substeps) + Extended Bias Asymmetry
+// Jiles-Atherton model of ferromagnetic hysteresis
+// 4 cycles × 24 substeps/cycle = 96 total
+// No ondemand - single fixed mode for clean CPU testing
 
 import("stdfaust.lib");
 
 //==============================================================================
-// fsm_channel: Main processing function
+// fsm_channel: Mode 3 only (96 substeps)
 //==============================================================================
 fsm_channel(input_gain_db, output_gain_db, drive_db, mix_val,
              Ms, a_density, k_pinning, c_reversibility, alpha_coupling,
@@ -18,7 +17,7 @@ with {
   input_gain  = ba.db2linear(input_gain_db) : si.smoo;
   output_gain = ba.db2linear(output_gain_db) : si.smoo;
   drive_gain  = ba.db2linear(drive_db) : si.smoo;
-  drive_comp  = (1.0 / drive_gain) * ba.db2linear(15.6);  // drive inverse + JA makeup
+  drive_comp  = (1.0 / drive_gain) * ba.db2linear(15.6);
 
   // ===== Derived constants =====
   Ms_safe    = max(Ms, 1e-6);
@@ -27,13 +26,10 @@ with {
   inv_a_norm = 1.0 / max(a_norm, 1e-9);
   k_norm     = k_pinning / Ms_safe;
   c_norm     = c_reversibility;
-  sigma      = 1e-3;  // Moderate safety - keeps inv_pin finite when pin hits zero
+  sigma      = 1e-3;
   bias_amp   = bias_level * bias_scale;
 
-  // Bias compensation (piecewise linear from measured data)
-  // Reference: bias_amp=4.4 (bias_level=0.4, bias_scale=11) = 0dB
-  // bias_amp 0.44 → comp -8.2dB, bias_amp 10.78 → comp +6.4dB
-  // Slopes: low = 8.2/3.96 = 2.07, high = 6.4/6.38 = 1.003
+  // Bias compensation
   bias_comp_db = ba.if(bias_amp < 4.4,
                        (bias_amp - 4.4) * 2.07,
                        (bias_amp - 4.4) * 1.003);
@@ -41,15 +37,11 @@ with {
 
   two_pi = 2.0 * ma.PI;
 
-  // ===== K96: 4 cycles, 24 substeps/cycle = 96 total =====
+  // ===== Mode 3: 96 substeps (4 cycles × 24) =====
   substep_phase = two_pi / 24.0;
   inv_n = 1.0 / 96.0;
 
-  // ===== Wrap to [0, 2π) =====
   wrap_2pi(p) = ba.if(p >= two_pi, p - two_pi, p);
-
-  // ===== Real tanh =====
-  ja_tanh = ma.tanh;
 
   // ===== Core JA substep =====
   ja_substep(bias_offset, M_prev, H_prev, H_audio) = M_new, H_new
@@ -59,11 +51,10 @@ with {
     He    = H_new + alpha_norm * M_prev;
 
     x_man    = He * inv_a_norm;
-    Man_e    = ja_tanh(x_man);
+    Man_e    = ma.tanh(x_man);
     Man_e2   = Man_e * Man_e;
     dMan_dH  = (1.0 - Man_e2) * inv_a_norm;
 
-    // Soft clamp on (Man_e - M_prev) to stabilize pinning term
     diff = Man_e - M_prev;
     diff_clamped = diff / (1.0 + abs(diff) * diff_scale);
 
@@ -85,7 +76,7 @@ with {
     M_new, H_new, H_audio, M_sum_new, phase_wrapped
   with {
     midpoint = ma.frac((phase + substep_phase * 0.5) / two_pi) * two_pi;
-    // Bias asymmetry: adds 2nd harmonic for even harmonics (warmth)
+    // Bias asymmetry: sin + 2nd harmonic for even harmonics
     bias_offset = sin(midpoint) + bias_asym * sin(2.0 * midpoint);
     step_result = ja_substep(bias_offset, M_prev, H_prev, H_audio);
     M_new = ba.selector(0, 2, step_result);
@@ -96,14 +87,14 @@ with {
   };
 
   // ===== 96 substeps via seq =====
-  ja_loop_96(M_prev, H_prev, H_audio, phi_start) =
+  ja_loop(M_prev, H_prev, H_audio, phi_start) =
     M_prev, H_prev, H_audio, 0.0, phi_start : seq(i, 96, ja_substep_seq)
     <: ba.selector(0, 5), ba.selector(1, 5), ba.selector(4, 5), ba.selector(3, 5);
 
   // ===== Main loop with M, H, and phase feedback =====
   ja_hysteresis(H_in) = (loop ~ (mem, mem, mem)) : ba.selector(3, 4) : *(inv_n)
   with {
-    loop(recM, recH, recPhi) = recM, recH, H_in, recPhi : ja_loop_96;
+    loop(recM, recH, recPhi) = recM, recH, H_in, recPhi : ja_loop;
   };
 
   // ===== DC blocker =====
@@ -122,7 +113,7 @@ with {
 };
 
 //==============================================================================
-// fsm_channel_ui: UI wrapper with all controls
+// fsm_channel_ui: UI wrapper - extended bias_asym range (0-1.0)
 //==============================================================================
 fsm_channel_ui =
   fsm_channel(input_gain_db, output_gain_db, drive_db, mix,
@@ -135,7 +126,7 @@ with {
   drive_db       = hgroup("JA", hgroup("[01] GAIN", vslider("[2]Drive [dB]", 0.0, -18.0, 29.0, 0.1)));
   mix            = hgroup("JA", hgroup("[01] GAIN", vslider("[3]Mix", 1.0, 0.0, 1.0, 0.01)));
 
-  // Group 2: BIAS - asymmetry adds 2nd harmonic (0.5 max before inversion)
+  // Group 2: BIAS - asymmetry 0-0.5 (beyond 0.5 inverts)
   bias_level = hgroup("JA", hgroup("[02] BIAS", vslider("[0]Level", 0.4, 0.0, 1.0, 0.01)));
   bias_scale = hgroup("JA", hgroup("[02] BIAS", vslider("[1]Scale", 11.0, 1.0, 100.0, 0.1)));
   bias_asym  = hgroup("JA", hgroup("[02] BIAS", vslider("[2]Asym", 0.0, 0.0, 0.5, 0.01)));

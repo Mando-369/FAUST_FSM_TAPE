@@ -83,21 +83,23 @@ Both plugins use identical physics, DC blocker (SVF TPT 10 Hz), and parameter ra
 **CPU load (M4 Max, Reaper, AU/VST3):**
 | Implementation | CPU |
 |----------------|-----|
-| FAUST full-physics (72 substeps) | ~2% |
+| FAUST full-physics K96 (96 substeps) | ~2% |
 | C++ scheduler | ~2% |
 | FAUST + LUT optimization | <1% |
+| FAUST hybrid 50/50 | ~1.5-1.7% |
 
-**Key difference:** C++ uses fractional substep accumulation (variable 35-37 steps), FAUST uses fixed unrolled chains (exactly 36/54/66). This causes subtle high-frequency response differences when bias is active.
+**Key difference:** C++ uses fractional substep accumulation (variable 35-37 steps), FAUST uses fixed unrolled chains (exactly 96). This causes subtle high-frequency response differences when bias is active.
 
-**Note:** The LUT optimization trades some flexibility (fixed bias parameters) for massive CPU reduction. See `docs/CURRENT_STATUS.md` for details on this trade-off.
+**Note:** The LUT optimization trades some flexibility (fixed bias parameters) for massive CPU reduction. Hybrid 50/50 (48 real + 48 LUT) was tested but NOT recommended — Catmull-Rom interpolation overhead makes it only 0.3-0.5% faster than full physics. See `docs/CURRENT_STATUS.md` for details.
 
-### Full-Physics Prototype
+### Full-Physics Prototype (Recommended)
 
 `faust/dev/lib_latest_proto/jahysteresislib_proto.dsp` — Production-ready full-physics implementation:
-- K60 Ultra (72 substeps, 3 cycles × 24)
+- K96 (96 substeps, 4 cycles × 24) — sounds perfect
+- Bias Asymmetry: adds 2nd harmonic for warmth (`sin(phase) + asym * sin(2*phase)`)
 - Stabilization: diff_scale soft clamp, sigma=1e-3
 - Gain compensation: +15.6 dB makeup + piecewise bias compensation
-- UI: Grouped controls (Gain, Bias, Stab, Physics)
+- UI: Grouped controls (Gain, Bias [Level/Scale/Asym], Stab, Physics)
 
 ## License
 

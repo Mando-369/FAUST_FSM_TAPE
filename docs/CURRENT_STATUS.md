@@ -1,6 +1,6 @@
 # FAUST JA Hysteresis Library — Current Status
 
-**Last updated**: 2025-12-07
+**Last updated**: 2025-12-09
 **Collaborators**: Thomas Mandolini (OmegaDSP), GRAME (Stéphane Letz)
 
 ---
@@ -27,19 +27,20 @@ Create a reusable **FAUST library (`jahysteresis.lib`)** implementing the Jiles-
 | 10 bias modes (K28-K2101) | Complete | LoFi to beyond-physical range (integer cycles) |
 | FAUST prototype (ba.if) | Complete | `dev/ja_streaming_bias_proto.dsp` |
 | FAUST prototype (ondemand) | Complete | `dev/ja_streaming_bias_proto_OD_72.dsp` |
-| FAUST full-physics proto | Complete | `dev/lib_latest_proto/jahysteresislib_proto.dsp` (K60 Ultra, 72 substeps, stabilized) |
+| FAUST full-physics proto | Complete | `dev/lib_latest_proto/jahysteresislib_proto.dsp` (K96, 96 substeps, bias asymmetry) |
 | FAUST library | In Progress | `jahysteresis.lib` (contribution-ready) |
 | C++ reference (original) | Complete | `JAHysteresisScheduler` with ~2% CPU |
 | C++ reference (LUT) | Complete | `JAHysteresisSchedulerLUT` with <1% CPU expected |
 
 ### Performance (M4 Max, Reaper, AU/VST3)
 
-| Implementation | CPU @ K60 | Notes |
-|----------------|-----------|-------|
-| FAUST full-physics (72 substeps) | ~2% | Via `seq` unrolling |
+| Implementation | CPU | Notes |
+|----------------|-----|-------|
+| FAUST full-physics K96 (96 substeps) | ~2% | Via `seq` unrolling, sounds perfect |
+| FAUST full-physics K72 (72 substeps) | ~2% | Previous version |
 | C++ scheduler (original) | ~2% | Uses fractional substep accumulation |
-| FAUST + LUT | <1% | 1 real substep + LUT lookup |
-| FAUST + ondemand (72 substeps) | ~2% | Single mode, compile-time gating |
+| FAUST hybrid 50/50 (48 real + 48 LUT) | ~1.5-1.7% | Not worth it (see findings below) |
+| FAUST + LUT (1 real + 95 LUT) | <1% | Fixed bias parameters |
 | C++ + LUT | <1% | Ready for integration, see `cpp_reference/` |
 
 ### Achieved Breakthrough
@@ -50,12 +51,12 @@ Create a reusable **FAUST library (`jahysteresis.lib`)** implementing the Jiles-
 
 **Result**: Collapsed 66 JA physics evaluations to 1 + cheap bilinear interpolation.
 
-### Full-Physics Prototype (2025-12-07)
+### Full-Physics Prototype (2025-12-09)
 
 Prototype `dev/lib_latest_proto/jahysteresislib_proto.dsp` — production-ready full-physics implementation:
 
-- **Mode**: K60 Ultra (3 cycles × 24 substeps = 72 total, integer cycles)
-- **Physics**: Full JA computation for all 72 substeps via `seq(i, 72, ja_substep_seq)`
+- **Mode**: K96 (4 cycles × 24 substeps = 96 total, integer cycles)
+- **Physics**: Full JA computation for all 96 substeps via `seq(i, 96, ja_substep_seq)`
 - **Phase continuity**: M, H, and phase fed back across samples (3-way feedback loop)
 - **tanh**: Real `ma.tanh` (not fast_tanh with ±3 clamp)
 
@@ -63,20 +64,56 @@ Prototype `dev/lib_latest_proto/jahysteresislib_proto.dsp` — production-ready 
 - `diff_scale`: Soft clamp on (Man_e - M_prev) via `diff / (1 + |diff| * scale)`
 - `sigma = 1e-3`: Prevents 1/(pin+σ) from spiking when pin crosses zero
 
+**Bias Asymmetry** (2025-12-09):
+- Adds 2nd harmonic to bias oscillator for even harmonic content (warmth)
+- Formula: `bias_offset = sin(phase) + bias_asym * sin(2 * phase)`
+- Range: 0.0 to 0.5 (beyond 0.5 inverts the waveform)
+- Physically-based approach to adding even harmonics
+
 **Gain compensation**:
 - Drive compensation: inverse drive + 15.6 dB makeup for JA level drop
 - Bias compensation: piecewise linear based on bias_amp (reference: bias_amp=4.4 = 0dB)
 
 **UI groups** (all vsliders in hgroups):
 - [01] GAIN: Input, Output, Drive, Mix
-- [02] BIAS: Level, Scale
+- [02] BIAS: Level, Scale, Asym
 - [03] STAB: Diff Scale
 - [04] PHYSICS: Ms, a, k, c, alpha
 
 **Parameters**:
 - Input/Output: -24 to +24 dB
 - Drive range: -18 to +29 dB
+- Bias Asym: 0.0 to 0.5
 - DC blocker: 10 Hz, Q=0.74
+
+### Hybrid LUT Experiment (2025-12-09) — NOT RECOMMENDED
+
+Tested a 50/50 hybrid approach: 48 real substeps + 48 LUT substeps.
+
+**Goal**: Reduce CPU while maintaining parameter flexibility for the first half of substeps.
+
+**Implementation**:
+- First 48 substeps computed with real JA physics (responds to bias_asym, diff_scale)
+- Remaining 48 substeps looked up from 2D LUT (RK4-generated)
+- LUT generator updated with diff_scale=1.0 and sigma=1e-3 to match DSP
+
+**Issues discovered**:
+1. **H range too narrow**: Initial LUT with H∈[-1,1] caused 3dB gain difference at high drive (22dB). Fixed by expanding to H∈[-30,30].
+2. **Catmull-Rom overhead**: 16-point interpolation per lookup (4×4 grid) × 2 LUTs = 32 rdtable reads plus interpolation math.
+3. **Minimal CPU savings**: Only 0.3-0.5% reduction vs full physics (~1.5-1.7% vs ~2%), not the expected 50%.
+
+**Why hybrid doesn't pay off**:
+- Trading 48 substeps for 2 LUT lookups (with Catmull-Rom) is poor value
+- The 1-real-substep LUT approach saves much more (trades 95 substeps for 2 lookups)
+- But 1-real-substep loses parameter flexibility
+
+**Conclusion**: For production, use either:
+1. **Full physics K96** (~2% CPU) — sounds perfect, full parameter control
+2. **1-real + LUT** (<1% CPU) — fixed bias parameters, massive CPU savings
+
+The 50/50 hybrid sits in an awkward middle ground with neither benefit.
+
+**Test files**: `faust/test/test_mode3_bias_asym_hybrid.dsp`, `faust/test/ja_lut_k96.lib`
 
 ---
 

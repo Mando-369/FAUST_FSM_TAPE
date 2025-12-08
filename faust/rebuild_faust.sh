@@ -5,7 +5,7 @@
 set -e
 cd "$(dirname "$0")"
 
-DSP_FILE="dev/jahysteresislib_proto.dsp"
+DSP_FILE="dev/lib_latest_proto/jahysteresislib_proto.dsp"
 PROJECT_DIR="jahysteresislib_proto"
 JUCER_FILE="$PROJECT_DIR/jahysteresislib_proto.jucer"
 JUCE_ARCH="/opt/homebrew/share/faust/juce/juce-plugin.cpp"
@@ -53,8 +53,8 @@ else
     echo "=== Project doesn't exist, creating fresh ==="
     # Note: faust2juce creates output dir based on .dsp filename, we move it after
     faust2juce -jucemodulesdir ../../JUCE/modules -osc -double "$DSP_FILE"
-    # Move generated folder from dev/ to faust/ root if needed
-    [ -d "dev/jahysteresislib_proto" ] && mv dev/jahysteresislib_proto .
+    # Move generated folder from dev/lib_latest_proto/ to faust/ root if needed
+    [ -d "dev/lib_latest_proto/jahysteresislib_proto" ] && mv dev/lib_latest_proto/jahysteresislib_proto .
     echo "✓ Project created"
     echo "IMPORTANT: Note the plugin IDs in .jucer for future reference!"
     grep -E "pluginCode|bundleIdentifier" "$JUCER_FILE"
