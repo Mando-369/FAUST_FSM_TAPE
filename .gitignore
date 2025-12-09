@@ -73,3 +73,10 @@ juce_plugin/JuceLibraryCode/
 *.component/
 *.app/
 faust/jahysteresislib_proto/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OD_3_modes generated project (keep .dsp and build script only)
+faust/dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes/
