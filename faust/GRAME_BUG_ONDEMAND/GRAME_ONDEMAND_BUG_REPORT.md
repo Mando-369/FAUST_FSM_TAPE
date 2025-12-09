@@ -1,6 +1,6 @@
 # Ondemand Primitive Bug Report for GRAME
 
-**Date**: 2025-11-30 (Updated: 2025-12-08)
+**Date**: 2025-11-30 (Updated: 2025-12-09)
 **Reporter**: Thomas Mandolini (OmegaDSP)
 **Faust Fork**: `master-dev-ocpp-od-fir-2-FIR13` (ondemand branch)
 **Repository**: https://github.com/grame-cncm/faust (dev fork)
@@ -291,6 +291,33 @@ See `faust/dev/dev_old/` for working 72-substep implementation prototypes.
 ### For mode selection with runtime UI control:
 Use simple operations inside ondemand (LUT lookups work, complex seq chains don't).
 See `faust/GRAME_BUG_ONDEMAND/ja_streaming_bias_proto_od.dsp` for working LUT-based approach.
+
+### IMPORTANT: Avoid `si.smoo` on signals used inside ondemand blocks
+
+Using `si.smoo` (or any stateful smoothing filter) on signals that flow into `ondemand` blocks causes the same undeclared variable bug, even when the `seq` chains are otherwise working.
+
+**Fails:**
+```faust
+bias_amp = (bias_level * bias_scale) : si.smoo;  // Smoothed signal
+// ... later used inside ondemand via ja_substep(bias_offset, ...) where H_new uses bias_amp
+```
+
+**Also fails:**
+```faust
+bias_level = hgroup("...", vslider(...)) : si.smoo;  // Smoothed at slider
+bias_amp = bias_level * bias_scale;  // Still breaks ondemand
+```
+
+**Works:**
+```faust
+bias_level = hgroup("...", vslider(...));  // No smoothing
+bias_scale = hgroup("...", vslider(...));  // No smoothing
+bias_amp = bias_level * bias_scale;        // Raw multiplication - ondemand works
+```
+
+The `si.smoo` filter creates stateful feedback that confuses the ondemand clock environment analysis. The generated C++ references variables from one `if (iSlowXXBE)` block inside a different block, causing scope errors.
+
+**Workaround**: Don't use `si.smoo` on any parameter that feeds into an ondemand-gated computation. Accept the zipper noise on bias parameters, or smooth them outside the ondemand path.
 
 ---
 

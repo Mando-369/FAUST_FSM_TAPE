@@ -92,10 +92,16 @@ Both plugins use identical physics, DC blocker (SVF TPT 10 Hz), and parameter ra
 
 **Note:** The LUT optimization trades some flexibility (fixed bias parameters) for massive CPU reduction. Hybrid 50/50 (48 real + 48 LUT) was tested but NOT recommended — Catmull-Rom interpolation overhead makes it only 0.3-0.5% faster than full physics. See `docs/CURRENT_STATUS.md` for details.
 
-### Full-Physics Prototype (Recommended)
+### Full-Physics Prototypes (Recommended)
 
-`faust/dev/lib_latest_proto/jahysteresislib_proto.dsp` — Production-ready full-physics implementation:
+**Single mode**: `faust/dev/lib_latest_proto/jahysteresislib_proto.dsp`
 - K96 (96 substeps, 4 cycles × 24) — sounds perfect
+
+**Multi-mode with ondemand**: `faust/dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes.dsp`
+- K96/K48/K24 quality modes — only active mode computes
+- Build: `cd faust/dev/lib_latest_proto && ./build_OD_3_modes.sh`
+
+Common features:
 - Bias Asymmetry: adds 2nd harmonic for warmth (`sin(phase) + asym * sin(2*phase)`)
 - Stabilization: diff_scale soft clamp, sigma=1e-3
 - Gain compensation: +15.6 dB makeup + piecewise bias compensation

@@ -79,7 +79,18 @@ All implementations use identical physics: Ms=320, a=720, k=280, c=0.18, α=0.01
 ### Full-Physics Prototype (Recommended)
 
 `faust/dev/lib_latest_proto/jahysteresislib_proto.dsp` - K96 single mode:
-- 96 substeps via `seq(i, 96, ja_substep_seq)` (4 cycles × 24)
+
+### Ondemand Multi-Mode Prototype
+
+`faust/dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes.dsp` - 3 quality modes with `ondemand`:
+- K96 (4×24=96 substeps), K48 (4×12=48), K24 (4×6=24)
+- Only active mode computes (CPU-efficient mode selection)
+- Build script: `faust/dev/lib_latest_proto/build_OD_3_modes.sh`
+- Plugin ID: `e0a3`
+
+**Note**: K12 (4×3=12 substeps) was tested but removed - too few substeps causes instability at high bias levels.
+
+K96 single mode features:
 - Integer cycles to avoid bias leakage (half-integer causes 12kHz tone)
 - Phase continuity: M, H, phase fed back across samples
 - **Stabilization**: diff_scale soft clamp on (Man_e - M_prev), sigma=1e-3
@@ -168,8 +179,10 @@ FAUST_FSM_TAPE/
 │   ├── JAHysteresisLUT_K*.h        # C++ LUT headers (all 10 modes)
 │   ├── rebuild_faust.sh            # Rebuild without changing plugin IDs
 │   ├── dev/
-│   │   ├── lib_latest_proto/              # Latest full-physics prototype
-│   │   │   └── jahysteresislib_proto.dsp  # K96 with bias asymmetry (production-ready)
+│   │   ├── lib_latest_proto/              # Latest full-physics prototypes
+│   │   │   ├── jahysteresislib_proto.dsp  # K96 single mode (production-ready)
+│   │   │   ├── jahysteresislib_proto_OD_3_modes.dsp  # K96/K48/K24 with ondemand
+│   │   │   └── build_OD_3_modes.sh        # Build script for OD_3 variant
 │   │   └── dev_old/                       # Archived prototypes
 │   ├── test/
 │   │   ├── test_mode3_bias_asym.dsp       # K96 single-mode test

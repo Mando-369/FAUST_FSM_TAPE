@@ -28,6 +28,7 @@ Create a reusable **FAUST library (`jahysteresis.lib`)** implementing the Jiles-
 | FAUST prototype (ba.if) | Complete | `dev/ja_streaming_bias_proto.dsp` |
 | FAUST prototype (ondemand) | Complete | `dev/ja_streaming_bias_proto_OD_72.dsp` |
 | FAUST full-physics proto | Complete | `dev/lib_latest_proto/jahysteresislib_proto.dsp` (K96, 96 substeps, bias asymmetry) |
+| FAUST multi-mode (ondemand) | Complete | `dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes.dsp` (K96/K48/K24, only active computes) |
 | FAUST library | In Progress | `jahysteresis.lib` (contribution-ready) |
 | C++ reference (original) | Complete | `JAHysteresisScheduler` with ~2% CPU |
 | C++ reference (LUT) | Complete | `JAHysteresisSchedulerLUT` with <1% CPU expected |
@@ -50,6 +51,18 @@ Create a reusable **FAUST library (`jahysteresis.lib`)** implementing the Jiles-
 **Solution**: Precompute 2D LUT mapping `(M_in, H_audio) → (M_end, sumM_rest)` for the deterministic portion.
 
 **Result**: Collapsed 66 JA physics evaluations to 1 + cheap bilinear interpolation.
+
+### Multi-Mode Prototype with Ondemand (2025-12-09)
+
+Prototype `dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes.dsp` — 3 quality modes using ondemand:
+
+- **Modes**: K96 (HQ), K48 (Standard), K24 (Eco) — integer cycles to avoid bias leakage
+- **CPU optimization**: Only the active mode computes (via `ondemand` primitive)
+- **Cycles**: All modes use 4 cycles × varying substeps (24/12/6 per cycle)
+- **Build**: `cd faust/dev/lib_latest_proto && ./build_OD_3_modes.sh`
+- **Plugin ID**: `e0a3`, Bundle: `com.grame.jahysteresislib_proto_OD_3_modes`
+
+**Finding**: K8 (4×2=8 substeps) and K12 (4×3=12 substeps) modes failed at high bias levels — too few samples per cycle causes instability. Minimum viable is K24 (6 substeps/cycle).
 
 ### Full-Physics Prototype (2025-12-09)
 
@@ -556,19 +569,47 @@ FAUST_FSM_TAPE/
 2. Write usage examples for GRAME review
 3. Document integration path back to FSM_TAPE
 
-### IFC 2026 Preparation
+### Future Enhancements (from FSM Analysis)
 
-Invited by Stéphane Letz to present at **International Faust Conference 2026**:
-- **Date**: June 28-29, 2026
-- **Location**: Cannes, France
-- **Topic**: AI-assisted DSP development workflow, JA hysteresis optimization journey
+#### Tape Type Presets
+Implement JA parameter presets for different tape formulations:
+- **AMPEX 456** — warm, thick, forgiving (Ms=250-330, a=650-850, k=260-340)
+- **AMPEX 499** — high-output, cleaner (Ms=330-420, a=800-1000, k=200-280)
+- **Quantegy GP9** — super high-output, near-digital dynamics (Ms=400-500, a=900-1400, k=160-240)
+- **BASF/EMTEC 900** — European mastering, refined HF (Ms=350-440, a=900-1200, k=180-260)
+- **Sony Metal Particle** — aggressive, punchy (Ms=450-600, a=600-900, k=300-450)
+- **Consumer Ferric (Type I)** — crunchy, lo-fi (Ms=180-260, a=400-600, k=260-400)
+- **Consumer Chrome (Type II)** — nostalgic cassette (Ms=240-320, a=450-700, k=220-330)
 
----
+#### Machine Presets
+Implement JA parameter presets for specific tape machines:
+| Machine | Ms | a | k | c | α | biasLvl | biasAsym |
+|---------|-----|-----|-----|------|-------|---------|----------|
+| Studer A800 | 320 | 750 | 300 | 0.18 | 0.015 | 0.42 | 0.08 |
+| Studer A810 | 360 | 900 | 240 | 0.24 | 0.012 | 0.50 | 0.05 |
+| Ampex ATR-102 | 380 | 950 | 220 | 0.26 | 0.011 | 0.52 | 0.04 |
+| Otari MX5050 | 300 | 700 | 320 | 0.20 | 0.017 | 0.38 | 0.12 |
+
+#### Macro Controls (UI Simplification)
+Create a FAUST macro block mapping `Drive / Color / Bias / Character` → JA parameters:
+- **DRIVE (0-100%)** — controls magnetic intensity (drive_db, k, c, α)
+- **COLOR (Warm↔Bright)** — controls spectral tilt via a_density and bias_asym
+- **BIAS (Under↔Over)** — classic tape calibration control
+- **CHARACTER (0-1)** — morphs between machine presets (A800→A810→ATR-102→MX5050)
+
+#### Additional Tape Emulation Features
+For T805-like behavior:
+1. **Head bump simulation** — low-frequency resonance characteristic of tape heads
+2. **Reproduce EQ integrator** — playback head equalization curve
+3. **Tape speed modes** — 3.75, 7.5, 15, 30 IPS with different frequency responses
+4. **FM-style bias head leakage** — subtle bias carrier bleed-through
+5. **Dynamic wavelength saturation (λ response)** — frequency-dependent saturation based on recorded wavelength
+
+
 
 ## Questions for GRAME
 
-1. Any recommendations for managing multiple LUT variants (mode × parameter combinations) or interpolation variants?
-2. **Ondemand + runtime mode selection**: Is there a way to use `ondemand` for runtime mode switching with complex `seq` chains inside (full JA substeps), or does `ondemand` fundamentally require compile-time clocks for complex operations? See `faust/GRAME_BUG_ONDEMAND/GRAME_ONDEMAND_BUG_REPORT.md` for details.
+
 
 
 ---
