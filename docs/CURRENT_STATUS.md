@@ -1,6 +1,6 @@
 # FAUST JA Hysteresis Library — Current Status
 
-**Last updated**: 2025-12-09
+**Last updated**: 2025-12-10
 **Collaborators**: Thomas Mandolini (OmegaDSP), GRAME (Stéphane Letz)
 
 ---
@@ -52,7 +52,7 @@ Create a reusable **FAUST library (`jahysteresis.lib`)** implementing the Jiles-
 
 **Result**: Collapsed 66 JA physics evaluations to 1 + cheap bilinear interpolation.
 
-### Multi-Mode Prototype with Ondemand (2025-12-09)
+### Multi-Mode Prototype with Ondemand (2025-12-09, updated 2025-12-10)
 
 Prototype `dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes.dsp` — 3 quality modes using ondemand:
 
@@ -63,6 +63,24 @@ Prototype `dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes.dsp` — 3 qual
 - **Plugin ID**: `e0a3`, Bundle: `com.grame.jahysteresislib_proto_OD_3_modes`
 
 **Finding**: K8 (4×2=8 substeps) and K12 (4×3=12 substeps) modes failed at high bias levels — too few samples per cycle causes instability. Minimum viable is K24 (6 substeps/cycle).
+
+### Wavelength Saturation (λ Tilt) — NEW (2025-12-10)
+
+**Major sonic enhancement**: Added frequency-dependent pre-saturation to simulate tape wavelength response.
+
+**Physical basis**: In real tape recording, wavelength λ = tape_speed / frequency. Shorter wavelengths (higher frequencies) experience more saturation due to tape coating thickness loss. This is the dominant source of HF loss in studio-grade machines (per McKnight).
+
+**Implementation**:
+```faust
+lambda_sat = fi.spectral_tilt(3, 200, 15000, lambda_tilt);
+```
+
+- **Filter**: `fi.spectral_tilt` — order 3, band 200-15200 Hz
+- **Range**: -0.5 to +0.5 (±3 dB/octave)
+- **Position**: Before JA stage (pre-saturation boost/cut)
+- **Effect**: Positive values = HF boost before saturation = more HF saturation = "slower tape" character. Negative = opposite.
+
+**Result**: Instant retro vibes. This single control dramatically changes the tonal character — from bright/modern (negative tilt) to warm/vintage (positive tilt).
 
 ### Full-Physics Prototype (2025-12-09)
 
@@ -553,15 +571,6 @@ FAUST_FSM_TAPE/
 
 ### Immediate (Code)
 
-1. **LUT Responsiveness**: Prototype dynamic α(M) + k(dH) in `ja_substep0` (see `JA_LUT_NONLINEARITY.md`)
-2. If insufficient: Implement 2 real substeps + regenerate LUTs
-3. Benchmark CPU and A/B test against full-physics C++
-
-### Research
-
-1. Validate responsiveness enhancements against C++ reference
-2. Conduct harmonic imprint analysis for all 10 modes
-3. Determine if mode interpolation is viable
 
 ### Documentation
 
@@ -603,7 +612,7 @@ For T805-like behavior:
 2. **Reproduce EQ integrator** — playback head equalization curve
 3. **Tape speed modes** — 3.75, 7.5, 15, 30 IPS with different frequency responses
 4. **FM-style bias head leakage** — subtle bias carrier bleed-through
-5. **Dynamic wavelength saturation (λ response)** — frequency-dependent saturation based on recorded wavelength
+5. ~~**Dynamic wavelength saturation (λ response)**~~ — ✅ DONE (2025-12-10) — implemented as λ Tilt using `fi.spectral_tilt(3, 200, 15000, alpha)`
 
 
 

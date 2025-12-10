@@ -90,14 +90,15 @@ All implementations use identical physics: Ms=320, a=720, k=280, c=0.18, α=0.01
 
 **Note**: K12 (4×3=12 substeps) was tested but removed - too few substeps causes instability at high bias levels.
 
-K96 single mode features:
+Features:
 - Integer cycles to avoid bias leakage (half-integer causes 12kHz tone)
 - Phase continuity: M, H, phase fed back across samples
 - **Stabilization**: diff_scale soft clamp on (Man_e - M_prev), sigma=1e-3
 - **Bias Asymmetry**: `sin(phase) + bias_asym * sin(2*phase)` for 2nd harmonic (warmth)
+- **Wavelength Saturation (λ Tilt)**: `fi.spectral_tilt(3, 200, 15000, alpha)` — frequency-dependent saturation simulating shorter wavelengths hitting tape harder. Range -0.5 to +0.5 (-3 to +3 dB/octave), step 0.001. Instant retro vibes.
 - **Gain compensation**: +15.6 dB makeup + piecewise bias compensation
-- **UI**: Grouped controls (Gain, Bias [Level/Scale/Asym], Stab, Physics)
-- Drive range: -18 to +29 dB, Bias Asym: 0-0.5
+- **UI**: Grouped controls (Quality, Gain, Bias, Stab, Tape [λ Tilt], Physics)
+- Drive range: -18 to +29 dB, Bias Asym: 0-0.5, λ Tilt: -0.5 to +0.5
 - **CPU**: ~2% — sounds perfect, full parameter control
 
 **Note**: Hybrid LUT (50% real + 50% LUT) was tested but NOT recommended — only saves 0.3-0.5% CPU due to Catmull-Rom interpolation overhead. See `docs/CURRENT_STATUS.md` for details.

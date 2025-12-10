@@ -103,9 +103,10 @@ Both plugins use identical physics, DC blocker (SVF TPT 10 Hz), and parameter ra
 
 Common features:
 - Bias Asymmetry: adds 2nd harmonic for warmth (`sin(phase) + asym * sin(2*phase)`)
+- **Wavelength Saturation (λ Tilt)**: frequency-dependent pre-saturation via `fi.spectral_tilt(3, 200, 15000, alpha)`. Simulates shorter wavelengths (higher frequencies) hitting tape harder — instant retro vibes. Range: -0.5 to +0.5 (-3 to +3 dB/octave), step 0.001.
 - Stabilization: diff_scale soft clamp, sigma=1e-3
 - Gain compensation: +15.6 dB makeup + piecewise bias compensation
-- UI: Grouped controls (Gain, Bias [Level/Scale/Asym], Stab, Physics)
+- UI: Grouped controls (Quality, Gain, Bias, Stab, Tape [λ Tilt], Physics)
 
 ## License
 

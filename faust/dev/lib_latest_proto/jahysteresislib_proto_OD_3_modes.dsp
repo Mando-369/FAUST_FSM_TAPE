@@ -15,7 +15,7 @@ import("stdfaust.lib");
 //==============================================================================
 fsm_channel(input_gain_db, output_gain_db, drive_db, mix_val,
              Ms, a_density, k_pinning, c_reversibility, alpha_coupling,
-             bias_level, bias_scale, bias_asym, diff_scale, quality_mode) =
+             bias_level, bias_scale, bias_asym, diff_scale, lambda_tilt, quality_mode) =
   ef.dryWetMixer(mix_val, wet_gained)
 with {
   // ===== Gains =====
@@ -173,10 +173,18 @@ with {
   // ===== DC blocker =====
   dc_blocker = fi.SVFTPT.HP2(10.0, 0.74);
 
+  // ===== Wavelength saturation (λ response) =====
+  // Tilt filter: HF boost before JA simulates shorter wavelengths saturating harder
+  // alpha > 0 = HF boost, range -0.5 to +0.5 (~-3 to +3 dB/octave)
+  // Band: 200 Hz to 15200 Hz (extended tape-relevant range)
+  // Order 3 = good accuracy vs CPU tradeoff
+  lambda_sat = fi.spectral_tilt(3, 200, 15000, lambda_tilt);
+
   // ===== FSM stage =====
   fsm_stage(x) =
     x * input_gain
     : *(drive_gain)
+    : lambda_sat
     : ja_hysteresis
     : dc_blocker
     : *(drive_comp)
@@ -191,7 +199,7 @@ with {
 fsm_channel_ui =
   fsm_channel(input_gain_db, output_gain_db, drive_db, mix,
                Ms, a_density, k_pinning, c_reversibility, alpha_coupling,
-               bias_level, bias_scale, bias_asym, diff_scale, quality_mode)
+               bias_level, bias_scale, bias_asym, diff_scale, lambda_tilt, quality_mode)
 with {
   // Group 0: QUALITY - mode selection (uses ondemand, only active mode computes)
   quality_mode = hgroup("JA", hgroup("[00] QUALITY", nentry("[0]Mode [style:menu{'K96 HQ':0;'K48 Standard':1;'K24 Eco':2}]", 0, 0, 2, 1)));
@@ -211,12 +219,16 @@ with {
   // Group 3: STABILIZATION
   diff_scale = hgroup("JA", hgroup("[03] STAB", vslider("[0]Diff Scale", 1.0, 0.0, 4.0, 0.01)));
 
-  // Group 4: PHYSICS
-  Ms              = hgroup("JA", hgroup("[04] PHYSICS", vslider("[0]Ms", 320.0, 100.0, 1000.0, 1.0)));
-  a_density       = hgroup("JA", hgroup("[04] PHYSICS", vslider("[1]a", 720.0, 100.0, 2000.0, 1.0)));
-  k_pinning       = hgroup("JA", hgroup("[04] PHYSICS", vslider("[2]k", 280.0, 50.0, 1000.0, 1.0)));
-  c_reversibility = hgroup("JA", hgroup("[04] PHYSICS", vslider("[3]c", 0.18, 0.0, 1.0, 0.01)));
-  alpha_coupling  = hgroup("JA", hgroup("[04] PHYSICS", vslider("[4]alpha", 0.015, 0.001, 0.1, 0.001)));
+  // Group 4: TAPE - wavelength saturation (λ response)
+  // Tilt: 0 = flat, +0.5 = +3 dB/oct HF boost, -0.5 = -3 dB/oct HF cut
+  lambda_tilt = hgroup("JA", hgroup("[04] TAPE", vslider("[0]λ Tilt", 0.0, -0.5, 0.5, 0.001)));
+
+  // Group 5: PHYSICS
+  Ms              = hgroup("JA", hgroup("[05] PHYSICS", vslider("[0]Ms", 320.0, 100.0, 1000.0, 1.0)));
+  a_density       = hgroup("JA", hgroup("[05] PHYSICS", vslider("[1]a", 720.0, 100.0, 2000.0, 1.0)));
+  k_pinning       = hgroup("JA", hgroup("[05] PHYSICS", vslider("[2]k", 280.0, 50.0, 1000.0, 1.0)));
+  c_reversibility = hgroup("JA", hgroup("[05] PHYSICS", vslider("[3]c", 0.18, 0.0, 1.0, 0.01)));
+  alpha_coupling  = hgroup("JA", hgroup("[05] PHYSICS", vslider("[4]alpha", 0.015, 0.001, 0.1, 0.001)));
 };
 
 process = par(i, 2, fsm_channel_ui);
