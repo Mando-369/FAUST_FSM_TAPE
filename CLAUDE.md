@@ -83,22 +83,23 @@ All implementations use identical physics: Ms=320, a=720, k=280, c=0.18, α=0.01
 ### Ondemand Multi-Mode Prototype
 
 `faust/dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes.dsp` - 3 quality modes with `ondemand`:
-- K96 (4×24=96 substeps), K48 (4×12=48), K24 (4×6=24)
+- K92 (4×23=92 substeps), K44 (4×11=44), K28 (4×7=28) — **prime substeps per cycle**
 - Only active mode computes (CPU-efficient mode selection)
 - Build script: `faust/dev/lib_latest_proto/build_OD_3_modes.sh`
 - Plugin ID: `e0a3`
 
-**Note**: K12 (4×3=12 substeps) was tested but removed - too few substeps causes instability at high bias levels.
+**Prime substep discovery**: Using prime numbers (7, 11, 23) eliminates noise floor flickering. Non-repeating sampling pattern reduces coherent aliasing.
 
 Features:
 - Integer cycles to avoid bias leakage (half-integer causes 12kHz tone)
 - Phase continuity: M, H, phase fed back across samples
-- **Stabilization**: diff_scale soft clamp on (Man_e - M_prev), sigma=1e-3
+- **Stabilization**: diff_scale per mode (K92=2.53, K44=3.93, K28=1.81)
 - **Bias Asymmetry**: `sin(phase) + bias_asym * sin(2*phase)` for 2nd harmonic (warmth)
-- **Wavelength Saturation (λ Tilt)**: `fi.spectral_tilt(3, 200, 15000, alpha)` — frequency-dependent saturation simulating shorter wavelengths hitting tape harder. Range -0.5 to +0.5 (-3 to +3 dB/octave), step 0.001. Instant retro vibes.
-- **Gain compensation**: +15.6 dB makeup + piecewise bias compensation
-- **UI**: Grouped controls (Quality, Gain, Bias, Stab, Tape [λ Tilt], Physics)
-- Drive range: -18 to +29 dB, Bias Asym: 0-0.5, λ Tilt: -0.5 to +0.5
+- **Wavelength Saturation (λ Tilt)**: `fi.spectral_tilt(3, 200, 15000, alpha)` — range -0.1 to +0.1
+- **Gain compensation**: +15.6 dB makeup + mode/bias/asym compensation
+- **DC blocker**: 5 Hz, Q=0.7071 (Butterworth)
+- **UI**: Grouped controls (Quality, Gain, Bias, Tape, Physics)
+- Drive range: -18 to +29 dB, Bias Level: 0.01-1.0, Bias Asym: 0-0.5, λ Tilt: -0.1 to +0.1
 - **CPU**: ~2% — sounds perfect, full parameter control
 
 **Note**: Hybrid LUT (50% real + 50% LUT) was tested but NOT recommended — only saves 0.3-0.5% CPU due to Catmull-Rom interpolation overhead. See `docs/CURRENT_STATUS.md` for details.

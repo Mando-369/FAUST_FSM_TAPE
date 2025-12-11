@@ -3,10 +3,10 @@
 // mathematical description relating magnetization (M) to applied field (H).
 // Combined with phase-locked bias oscillator for analog tape emulation.
 //
-// 3 quality modes (integer cycles to avoid bias leakage):
-// - K96: 4 cycles × 24 = 96 substeps (High Quality)
-// - K48: 4 cycles × 12 = 48 substeps (Standard)
-// - K24: 4 cycles × 6  = 24 substeps (Eco)
+// 3 quality modes (prime substeps per cycle for stability):
+// - K92: 4 cycles × 23 = 92 substeps (High Quality)
+// - K44: 4 cycles × 11 = 44 substeps (Standard)
+// - K28: 4 cycles × 7  = 28 substeps (Eco)
 
 import("stdfaust.lib");
 
@@ -15,7 +15,7 @@ import("stdfaust.lib");
 //==============================================================================
 fsm_channel(input_gain_db, output_gain_db, drive_db, mix_val,
              Ms, a_density, k_pinning, c_reversibility, alpha_coupling,
-             bias_level, bias_scale, bias_asym, diff_scale, lambda_tilt, quality_mode) =
+             bias_level, bias_scale, bias_asym, lambda_tilt, quality_mode) =
   ef.dryWetMixer(mix_val, wet_gained)
 with {
   // ===== Gains =====
@@ -34,28 +34,33 @@ with {
   sigma      = 1e-3;  // Moderate safety - keeps inv_pin finite when pin hits zero
   bias_amp   = bias_level * bias_scale;  // No smoothing - si.smoo breaks ondemand
 
-  // Bias compensation (piecewise linear from measured data)
-  // Reference: bias_amp=4.4 (bias_level=0.4, bias_scale=11) = 0dB
-  // bias_amp 0.44 → comp -8.2dB, bias_amp 10.78 → comp +6.4dB
-  // Slopes: low = 8.2/3.96 = 2.07, high = 6.4/6.38 = 1.003
-  bias_comp_db = ba.if(bias_amp < 4.4,
-                       (bias_amp - 4.4) * 2.07,
-                       (bias_amp - 4.4) * 1.003);
+  // ===== Diff scale per mode (tuned for balanced harmonics) =====
+  // K92 = 2.53, K44 = 3.93, K28 = 1.81
+  diff_scale = ba.selectn(3, quality_mode, 2.53, 3.93, 1.81);
+
+  // Bias compensation (piecewise linear per mode, measured at scale=11)
+  // Reference: bias_level=0.40 = 0dB for all modes
+  // K92: 0.01→-9.6dB, 0.99→+9.1dB | K44: 0.01→-10.8dB, 0.99→+9.2dB | K28: 0.01→-13.1dB, 0.99→+12.7dB
+  scale_factor = bias_scale / 11.0;
+  bias_comp_db_0 = ba.if(bias_level < 0.40, (bias_level - 0.40) * 24.62, (bias_level - 0.40) * 15.42);
+  bias_comp_db_1 = ba.if(bias_level < 0.40, (bias_level - 0.40) * 27.69, (bias_level - 0.40) * 15.59);
+  bias_comp_db_2 = ba.if(bias_level < 0.40, (bias_level - 0.40) * 33.59, (bias_level - 0.40) * 21.53);
+  bias_comp_db = ba.selectn(3, quality_mode, bias_comp_db_0, bias_comp_db_1, bias_comp_db_2) * scale_factor;
   bias_comp = ba.db2linear(bias_comp_db);
 
   two_pi = 2.0 * ma.PI;
 
-  // ===== Phase increments per mode (4 cycles each) =====
-  // K96: 4 cycles × 24 substeps = 96 total, phase = 2π/24
-  // K48: 4 cycles × 12 substeps = 48 total, phase = 2π/12
-  // K24: 4 cycles × 6 substeps  = 24 total, phase = 2π/6
-  substep_phase_96 = two_pi / 24.0;
-  substep_phase_48 = two_pi / 12.0;
-  substep_phase_24 = two_pi / 6.0;
+  // ===== Phase increments per mode (4 cycles, prime substeps) =====
+  // K92: 4 cycles × 23 substeps = 92 total, phase = 2π/23
+  // K44: 4 cycles × 11 substeps = 44 total, phase = 2π/11
+  // K28: 4 cycles × 7 substeps  = 28 total, phase = 2π/7
+  substep_phase_92 = two_pi / 23.0;
+  substep_phase_44 = two_pi / 11.0;
+  substep_phase_28 = two_pi / 7.0;
 
-  inv_n_96 = 1.0 / 96.0;
-  inv_n_48 = 1.0 / 48.0;
-  inv_n_24 = 1.0 / 24.0;
+  inv_n_92 = 1.0 / 92.0;
+  inv_n_44 = 1.0 / 44.0;
+  inv_n_28 = 1.0 / 28.0;
 
   // ===== Wrap to [0, 2π) =====
   wrap_2pi(p) = ba.if(p >= two_pi, p - two_pi, p);
@@ -92,65 +97,65 @@ with {
     M_new       = max(-1.0, min(1.0, M_unclamped));
   };
 
-  // ===== Substep with phase tracking + bias asymmetry (K96) =====
-  ja_substep_seq_96(M_prev, H_prev, H_audio, M_sum_prev, phase) =
+  // ===== Substep with phase tracking + bias asymmetry (K92) =====
+  ja_substep_seq_92(M_prev, H_prev, H_audio, M_sum_prev, phase) =
     M_new, H_new, H_audio, M_sum_new, phase_wrapped
   with {
-    midpoint = ma.frac((phase + substep_phase_96 * 0.5) / two_pi) * two_pi;
+    midpoint = ma.frac((phase + substep_phase_92 * 0.5) / two_pi) * two_pi;
     bias_offset = sin(midpoint) + bias_asym * sin(2.0 * midpoint);
     step_result = ja_substep(bias_offset, M_prev, H_prev, H_audio);
     M_new = ba.selector(0, 2, step_result);
     H_new = ba.selector(1, 2, step_result);
     M_sum_new = M_sum_prev + M_new;
-    phase_advanced = phase + substep_phase_96;
+    phase_advanced = phase + substep_phase_92;
     phase_wrapped = wrap_2pi(phase_advanced);
   };
 
-  // ===== Substep with phase tracking + bias asymmetry (K48) =====
-  ja_substep_seq_48(M_prev, H_prev, H_audio, M_sum_prev, phase) =
+  // ===== Substep with phase tracking + bias asymmetry (K44) =====
+  ja_substep_seq_44(M_prev, H_prev, H_audio, M_sum_prev, phase) =
     M_new, H_new, H_audio, M_sum_new, phase_wrapped
   with {
-    midpoint = ma.frac((phase + substep_phase_48 * 0.5) / two_pi) * two_pi;
+    midpoint = ma.frac((phase + substep_phase_44 * 0.5) / two_pi) * two_pi;
     bias_offset = sin(midpoint) + bias_asym * sin(2.0 * midpoint);
     step_result = ja_substep(bias_offset, M_prev, H_prev, H_audio);
     M_new = ba.selector(0, 2, step_result);
     H_new = ba.selector(1, 2, step_result);
     M_sum_new = M_sum_prev + M_new;
-    phase_advanced = phase + substep_phase_48;
+    phase_advanced = phase + substep_phase_44;
     phase_wrapped = wrap_2pi(phase_advanced);
   };
 
-  // ===== Substep with phase tracking + bias asymmetry (K24) =====
-  ja_substep_seq_24(M_prev, H_prev, H_audio, M_sum_prev, phase) =
+  // ===== Substep with phase tracking + bias asymmetry (K28) =====
+  ja_substep_seq_28(M_prev, H_prev, H_audio, M_sum_prev, phase) =
     M_new, H_new, H_audio, M_sum_new, phase_wrapped
   with {
-    midpoint = ma.frac((phase + substep_phase_24 * 0.5) / two_pi) * two_pi;
+    midpoint = ma.frac((phase + substep_phase_28 * 0.5) / two_pi) * two_pi;
     bias_offset = sin(midpoint) + bias_asym * sin(2.0 * midpoint);
     step_result = ja_substep(bias_offset, M_prev, H_prev, H_audio);
     M_new = ba.selector(0, 2, step_result);
     H_new = ba.selector(1, 2, step_result);
     M_sum_new = M_sum_prev + M_new;
-    phase_advanced = phase + substep_phase_24;
+    phase_advanced = phase + substep_phase_28;
     phase_wrapped = wrap_2pi(phase_advanced);
   };
 
-  // ===== K96: 4 cycles × 24 = 96 substeps (for 48 kHz) =====
-  ja_loop_96(M_prev, H_prev, H_audio, phi_start) =
-    M_prev, H_prev, H_audio, 0.0, phi_start : seq(i, 96, ja_substep_seq_96)
+  // ===== K92: 4 cycles × 23 = 92 substeps (HQ) =====
+  ja_loop_92(M_prev, H_prev, H_audio, phi_start) =
+    M_prev, H_prev, H_audio, 0.0, phi_start : seq(i, 92, ja_substep_seq_92)
     <: ba.selector(0, 5), ba.selector(1, 5), ba.selector(4, 5), ba.selector(3, 5);
 
-  // ===== K48: 4 cycles × 12 = 48 substeps (for 96 kHz) =====
-  ja_loop_48(M_prev, H_prev, H_audio, phi_start) =
-    M_prev, H_prev, H_audio, 0.0, phi_start : seq(i, 48, ja_substep_seq_48)
+  // ===== K44: 4 cycles × 11 = 44 substeps (Standard) =====
+  ja_loop_44(M_prev, H_prev, H_audio, phi_start) =
+    M_prev, H_prev, H_audio, 0.0, phi_start : seq(i, 44, ja_substep_seq_44)
     <: ba.selector(0, 5), ba.selector(1, 5), ba.selector(4, 5), ba.selector(3, 5);
 
-  // ===== K24: 4 cycles × 6 = 24 substeps (Light) =====
-  ja_loop_24(M_prev, H_prev, H_audio, phi_start) =
-    M_prev, H_prev, H_audio, 0.0, phi_start : seq(i, 24, ja_substep_seq_24)
+  // ===== K28: 4 cycles × 7 = 28 substeps (Light) =====
+  ja_loop_28(M_prev, H_prev, H_audio, phi_start) =
+    M_prev, H_prev, H_audio, 0.0, phi_start : seq(i, 28, ja_substep_seq_28)
     <: ba.selector(0, 5), ba.selector(1, 5), ba.selector(4, 5), ba.selector(3, 5);
 
   // ===== Mode selection from UI =====
-  // 0 = K96 (HQ), 1 = K48 (Standard), 2 = K24 (Eco)
+  // 0 = K92 (HQ), 1 = K44 (Standard), 2 = K28 (Eco)
   mode = int(quality_mode + 0.5);
   clk(i) = (mode == i);
 
@@ -165,13 +170,13 @@ with {
     };
 
     // Mode-indexed loop selection
-    loop(0, H) = loopK(H, ja_loop_96, inv_n_96);
-    loop(1, H) = loopK(H, ja_loop_48, inv_n_48);
-    loop(2, H) = loopK(H, ja_loop_24, inv_n_24);
+    loop(0, H) = loopK(H, ja_loop_92, inv_n_92);
+    loop(1, H) = loopK(H, ja_loop_44, inv_n_44);
+    loop(2, H) = loopK(H, ja_loop_28, inv_n_28);
   };
 
   // ===== DC blocker =====
-  dc_blocker = fi.SVFTPT.HP2(10.0, 0.74);
+  dc_blocker = fi.SVFTPT.HP2(5.0, 0.7071);
 
   // ===== Wavelength saturation (λ response) =====
   // Tilt filter: HF boost before JA simulates shorter wavelengths saturating harder
@@ -179,6 +184,17 @@ with {
   // Band: 200 Hz to 15200 Hz (extended tape-relevant range)
   // Order 3 = good accuracy vs CPU tradeoff
   lambda_sat = fi.spectral_tilt(3, 200, 15000, lambda_tilt);
+
+  // ===== Mode compensation (dB) =====
+  // K92 = -0.3dB, K44 = +0.8dB, K28 = +3.0dB
+  mode_comp_db = ba.selectn(3, quality_mode, -0.3, 0.8, 3.0);
+  mode_comp = ba.db2linear(mode_comp_db);
+
+  // ===== Asym compensation (dB) - linear from 0dB at asym=0 =====
+  // K92: -1.8dB at 0.5, K44: -4.9dB at 0.5, K28: -10.5dB at 0.5
+  asym_slope = ba.selectn(3, quality_mode, -1.8, -4.9, -10.5);
+  asym_comp_db = bias_asym * asym_slope;
+  asym_comp = ba.db2linear(asym_comp_db);
 
   // ===== FSM stage =====
   fsm_stage(x) =
@@ -188,7 +204,9 @@ with {
     : ja_hysteresis
     : dc_blocker
     : *(drive_comp)
-    : *(bias_comp);
+    : *(bias_comp)
+    : *(mode_comp)
+    : *(asym_comp);
 
   wet_gained = fsm_stage : *(output_gain);
 };
@@ -199,10 +217,10 @@ with {
 fsm_channel_ui =
   fsm_channel(input_gain_db, output_gain_db, drive_db, mix,
                Ms, a_density, k_pinning, c_reversibility, alpha_coupling,
-               bias_level, bias_scale, bias_asym, diff_scale, lambda_tilt, quality_mode)
+               bias_level, bias_scale, bias_asym, lambda_tilt, quality_mode)
 with {
   // Group 0: QUALITY - mode selection (uses ondemand, only active mode computes)
-  quality_mode = hgroup("JA", hgroup("[00] QUALITY", nentry("[0]Mode [style:menu{'K96 HQ':0;'K48 Standard':1;'K24 Eco':2}]", 0, 0, 2, 1)));
+  quality_mode = hgroup("JA", hgroup("[00] QUALITY", nentry("[0]Mode [style:menu{'K92 HQ':0;'K44 Standard':1;'K28 Eco':2}]", 0, 0, 2, 1)));
 
   // Group 1: GAIN
   input_gain_db  = hgroup("JA", hgroup("[01] GAIN", vslider("[0]Input [dB]", 0.0, -24.0, 24.0, 0.1)));
@@ -212,23 +230,20 @@ with {
 
   // Group 2: BIAS - asymmetry adds 2nd harmonic (0.5 max before inversion)
   // No si.smoo on bias params - breaks ondemand code generation
-  bias_level = hgroup("JA", hgroup("[02] BIAS", vslider("[0]Level", 0.4, 0.0, 1.0, 0.01)));
+  bias_level = hgroup("JA", hgroup("[02] BIAS", vslider("[0]Level", 0.4, 0.01, 1.0, 0.01)));
   bias_scale = hgroup("JA", hgroup("[02] BIAS", vslider("[1]Scale", 11.0, 1.0, 100.0, 0.1)));
   bias_asym  = hgroup("JA", hgroup("[02] BIAS", vslider("[2]Asym", 0.0, 0.0, 0.5, 0.01)));
 
-  // Group 3: STABILIZATION
-  diff_scale = hgroup("JA", hgroup("[03] STAB", vslider("[0]Diff Scale", 1.0, 0.0, 4.0, 0.01)));
+  // Group 3: TAPE - wavelength saturation (λ response)
+  // Tilt: 0 = flat, +0.1 = HF boost, -0.1 = HF cut
+  lambda_tilt = hgroup("JA", hgroup("[03] TAPE", vslider("[0]λ Tilt", 0.0, -0.1, 0.1, 0.001)));
 
-  // Group 4: TAPE - wavelength saturation (λ response)
-  // Tilt: 0 = flat, +0.5 = +3 dB/oct HF boost, -0.5 = -3 dB/oct HF cut
-  lambda_tilt = hgroup("JA", hgroup("[04] TAPE", vslider("[0]λ Tilt", 0.0, -0.5, 0.5, 0.001)));
-
-  // Group 5: PHYSICS
-  Ms              = hgroup("JA", hgroup("[05] PHYSICS", vslider("[0]Ms", 320.0, 100.0, 1000.0, 1.0)));
-  a_density       = hgroup("JA", hgroup("[05] PHYSICS", vslider("[1]a", 720.0, 100.0, 2000.0, 1.0)));
-  k_pinning       = hgroup("JA", hgroup("[05] PHYSICS", vslider("[2]k", 280.0, 50.0, 1000.0, 1.0)));
-  c_reversibility = hgroup("JA", hgroup("[05] PHYSICS", vslider("[3]c", 0.18, 0.0, 1.0, 0.01)));
-  alpha_coupling  = hgroup("JA", hgroup("[05] PHYSICS", vslider("[4]alpha", 0.015, 0.001, 0.1, 0.001)));
+  // Group 4: PHYSICS
+  Ms              = hgroup("JA", hgroup("[04] PHYSICS", vslider("[0]Ms", 320.0, 100.0, 1000.0, 1.0)));
+  a_density       = hgroup("JA", hgroup("[04] PHYSICS", vslider("[1]a", 720.0, 100.0, 2000.0, 1.0)));
+  k_pinning       = hgroup("JA", hgroup("[04] PHYSICS", vslider("[2]k", 280.0, 50.0, 1000.0, 1.0)));
+  c_reversibility = hgroup("JA", hgroup("[04] PHYSICS", vslider("[3]c", 0.18, 0.0, 1.0, 0.01)));
+  alpha_coupling  = hgroup("JA", hgroup("[04] PHYSICS", vslider("[4]alpha", 0.015, 0.001, 0.1, 0.001)));
 };
 
 process = par(i, 2, fsm_channel_ui);

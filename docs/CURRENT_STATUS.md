@@ -52,19 +52,35 @@ Create a reusable **FAUST library (`jahysteresis.lib`)** implementing the Jiles-
 
 **Result**: Collapsed 66 JA physics evaluations to 1 + cheap bilinear interpolation.
 
-### Multi-Mode Prototype with Ondemand (2025-12-09, updated 2025-12-10)
+### Multi-Mode Prototype with Ondemand (2025-12-09, updated 2025-12-11)
 
 Prototype `dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes.dsp` — 3 quality modes using ondemand:
 
-- **Modes**: K96 (HQ), K48 (Standard), K24 (Eco) — integer cycles to avoid bias leakage
+- **Modes**: K92 (HQ), K44 (Standard), K28 (Eco) — **prime substeps per cycle for stability**
 - **CPU optimization**: Only the active mode computes (via `ondemand` primitive)
-- **Cycles**: All modes use 4 cycles × varying substeps (24/12/6 per cycle)
+- **Cycles**: All modes use 4 cycles × prime substeps (23/11/7 per cycle)
 - **Build**: `cd faust/dev/lib_latest_proto && ./build_OD_3_modes.sh`
 - **Plugin ID**: `e0a3`, Bundle: `com.grame.jahysteresislib_proto_OD_3_modes`
 
-**Finding**: K8 (4×2=8 substeps) and K12 (4×3=12 substeps) modes failed at high bias levels — too few samples per cycle causes instability. Minimum viable is K24 (6 substeps/cycle).
+**Prime substep discovery (2025-12-11)**: Using prime numbers for substeps per cycle (7, 11, 23) eliminates noise floor flickering observed with non-prime counts. The non-repeating sampling pattern reduces coherent aliasing artifacts.
 
-### Wavelength Saturation (λ Tilt) — NEW (2025-12-10)
+| Mode | Cycles | Substeps/Cycle | Total | Phase Step |
+|------|--------|----------------|-------|------------|
+| K92 (HQ) | 4 | 23 (prime) | 92 | 15.7° |
+| K44 (Standard) | 4 | 11 (prime) | 44 | 32.7° |
+| K28 (Eco) | 4 | 7 (prime) | 28 | 51.4° |
+
+**Compensation systems** (all mode-dependent):
+- **Mode comp**: K92=-0.3dB, K44=+0.8dB, K28=+2.7dB
+- **Diff scale**: K92=2.53, K44=3.93, K28=1.81 (tuned for balanced harmonics)
+- **Bias comp**: Piecewise linear per mode, scaled by bias_scale/11.0
+- **Asym comp**: K92=-1.8dB, K44=-4.9dB, K28=-12.2dB at asym=0.5
+
+**DC blocker**: 5 Hz, Q=0.7071 (Butterworth) — lowered from 10 Hz to reduce LF phase rotation.
+
+**Finding**: K8 (4×2=8 substeps) and K12 (4×3=12 substeps) modes failed at high bias levels — too few samples per cycle causes instability. K24 (4×6=24) showed noise floor flickering. Minimum stable with clean noise floor is K28 (4×7=28).
+
+### Wavelength Saturation (λ Tilt) — (2025-12-10, updated 2025-12-11)
 
 **Major sonic enhancement**: Added frequency-dependent pre-saturation to simulate tape wavelength response.
 
@@ -75,12 +91,12 @@ Prototype `dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes.dsp` — 3 qual
 lambda_sat = fi.spectral_tilt(3, 200, 15000, lambda_tilt);
 ```
 
-- **Filter**: `fi.spectral_tilt` — order 3, band 200-15200 Hz
-- **Range**: -0.5 to +0.5 (±3 dB/octave)
+- **Filter**: `fi.spectral_tilt` — order 3, band 200-15000 Hz
+- **Range**: -0.1 to +0.1 (reduced from ±0.5 — original range was too extreme)
 - **Position**: Before JA stage (pre-saturation boost/cut)
 - **Effect**: Positive values = HF boost before saturation = more HF saturation = "slower tape" character. Negative = opposite.
 
-**Result**: Instant retro vibes. This single control dramatically changes the tonal character — from bright/modern (negative tilt) to warm/vintage (positive tilt).
+**Result**: Subtle but effective tonal shaping. The reduced range provides usable musical variation without extreme artifacts.
 
 ### Full-Physics Prototype (2025-12-09)
 
@@ -105,17 +121,19 @@ Prototype `dev/lib_latest_proto/jahysteresislib_proto.dsp` — production-ready 
 - Drive compensation: inverse drive + 15.6 dB makeup for JA level drop
 - Bias compensation: piecewise linear based on bias_amp (reference: bias_amp=4.4 = 0dB)
 
-**UI groups** (all vsliders in hgroups):
+**UI groups** (OD_3_modes prototype):
+- [00] QUALITY: Mode selection (K92 HQ / K44 Standard / K28 Eco)
 - [01] GAIN: Input, Output, Drive, Mix
-- [02] BIAS: Level, Scale, Asym
-- [03] STAB: Diff Scale
+- [02] BIAS: Level (0.01-1.0), Scale, Asym
+- [03] TAPE: λ Tilt (-0.1 to +0.1)
 - [04] PHYSICS: Ms, a, k, c, alpha
 
 **Parameters**:
 - Input/Output: -24 to +24 dB
 - Drive range: -18 to +29 dB
+- Bias Level: 0.01 to 1.0 (min raised to prevent instability)
 - Bias Asym: 0.0 to 0.5
-- DC blocker: 10 Hz, Q=0.74
+- DC blocker: 5 Hz, Q=0.7071 (Butterworth)
 
 ### Hybrid LUT Experiment (2025-12-09) — NOT RECOMMENDED
 
