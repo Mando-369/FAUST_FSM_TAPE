@@ -32,19 +32,21 @@ with {
   k_norm     = k_pinning / Ms_safe;
   c_norm     = c_reversibility;
   sigma      = 1e-3;  // Moderate safety - keeps inv_pin finite when pin hits zero
-  bias_amp   = bias_level * bias_scale;  // No smoothing - si.smoo breaks ondemand
+
+  // ===== Bias params (no smoothing - feedback breaks ondemand) =====
+  bias_amp = bias_level * bias_scale;
 
   // ===== Diff scale per mode (tuned for balanced harmonics) =====
-  // K92 = 2.53, K44 = 3.93, K28 = 1.81
-  diff_scale = ba.selectn(3, quality_mode, 2.53, 3.93, 1.81);
+  // K92 = 2.53, K44 = 3.93, K28 = 0.5
+  diff_scale = ba.selectn(3, quality_mode, 2.53, 3.93, 0.5);
 
   // Bias compensation (piecewise linear per mode, measured at scale=11)
   // Reference: bias_level=0.40 = 0dB for all modes
-  // K92: 0.01→-9.6dB, 0.99→+9.1dB | K44: 0.01→-10.8dB, 0.99→+9.2dB | K28: 0.01→-13.1dB, 0.99→+12.7dB
+  // K92: 0.01→-9.6dB, 0.99→+9.1dB | K44: 0.01→-10.8dB, 0.99→+9.2dB | K28: 0.01→-12.4dB, 0.99→+13.9dB
   scale_factor = bias_scale / 11.0;
   bias_comp_db_0 = ba.if(bias_level < 0.40, (bias_level - 0.40) * 24.62, (bias_level - 0.40) * 15.42);
   bias_comp_db_1 = ba.if(bias_level < 0.40, (bias_level - 0.40) * 27.69, (bias_level - 0.40) * 15.59);
-  bias_comp_db_2 = ba.if(bias_level < 0.40, (bias_level - 0.40) * 33.59, (bias_level - 0.40) * 21.53);
+  bias_comp_db_2 = ba.if(bias_level < 0.40, (bias_level - 0.40) * 31.79, (bias_level - 0.40) * 23.56);
   bias_comp_db = ba.selectn(3, quality_mode, bias_comp_db_0, bias_comp_db_1, bias_comp_db_2) * scale_factor;
   bias_comp = ba.db2linear(bias_comp_db);
 
@@ -186,13 +188,13 @@ with {
   lambda_sat = fi.spectral_tilt(3, 200, 15000, lambda_tilt);
 
   // ===== Mode compensation (dB) =====
-  // K92 = -0.3dB, K44 = +0.8dB, K28 = +3.0dB
-  mode_comp_db = ba.selectn(3, quality_mode, -0.3, 0.8, 3.0);
+  // K92 = -0.3dB, K44 = +0.8dB, K28 = +1.7dB
+  mode_comp_db = ba.selectn(3, quality_mode, -0.3, 0.8, 1.7);
   mode_comp = ba.db2linear(mode_comp_db);
 
   // ===== Asym compensation (dB) - linear from 0dB at asym=0 =====
   // K92: -1.8dB at 0.5, K44: -4.9dB at 0.5, K28: -10.5dB at 0.5
-  asym_slope = ba.selectn(3, quality_mode, -1.8, -4.9, -10.5);
+  asym_slope = ba.selectn(3, quality_mode, -1.8, -4.9, -8.2);
   asym_comp_db = bias_asym * asym_slope;
   asym_comp = ba.db2linear(asym_comp_db);
 
@@ -229,7 +231,6 @@ with {
   mix            = hgroup("JA", hgroup("[01] GAIN", vslider("[3]Mix", 1.0, 0.0, 1.0, 0.01)));
 
   // Group 2: BIAS - asymmetry adds 2nd harmonic (0.5 max before inversion)
-  // No si.smoo on bias params - breaks ondemand code generation
   bias_level = hgroup("JA", hgroup("[02] BIAS", vslider("[0]Level", 0.4, 0.01, 1.0, 0.01)));
   bias_scale = hgroup("JA", hgroup("[02] BIAS", vslider("[1]Scale", 11.0, 1.0, 100.0, 0.1)));
   bias_asym  = hgroup("JA", hgroup("[02] BIAS", vslider("[2]Asym", 0.0, 0.0, 0.5, 0.01)));

@@ -93,7 +93,7 @@ All implementations use identical physics: Ms=320, a=720, k=280, c=0.18, α=0.01
 Features:
 - Integer cycles to avoid bias leakage (half-integer causes 12kHz tone)
 - Phase continuity: M, H, phase fed back across samples
-- **Stabilization**: diff_scale per mode (K92=2.53, K44=3.93, K28=1.81)
+- **Stabilization**: diff_scale per mode (K92=2.53, K44=3.93, K28=0.5)
 - **Bias Asymmetry**: `sin(phase) + bias_asym * sin(2*phase)` for 2nd harmonic (warmth)
 - **Wavelength Saturation (λ Tilt)**: `fi.spectral_tilt(3, 200, 15000, alpha)` — range -0.1 to +0.1
 - **Gain compensation**: +15.6 dB makeup + mode/bias/asym compensation
@@ -103,6 +103,8 @@ Features:
 - **CPU**: ~2% — sounds perfect, full parameter control
 
 **Note**: Hybrid LUT (50% real + 50% LUT) was tested but NOT recommended — only saves 0.3-0.5% CPU due to Catmull-Rom interpolation overhead. See `docs/CURRENT_STATUS.md` for details.
+
+**Ondemand limitations**: Feedback-based smoothing (`si.smoo`, `ba.line`, manual one-pole with `~`) breaks ondemand code generation. Bias params are currently unsmoothed.
 
 ### C++ LUT Integration
 
