@@ -33,8 +33,9 @@ with {
   c_norm     = c_reversibility;
   sigma      = 1e-3;  // Moderate safety - keeps inv_pin finite when pin hits zero
 
-  // ===== Bias params (no smoothing - feedback breaks ondemand) =====
-  bias_amp = bias_level * bias_scale;
+  // ===== Bias params (smoothed) =====
+  bias_amp = bias_level * bias_scale : si.smoo;
+  bias_asym_s = bias_asym : si.smoo;
 
   // ===== Diff scale per mode (tuned for balanced harmonics) =====
   // K92 = 2.53, K44 = 3.93, K28 = 0.5
@@ -104,7 +105,7 @@ with {
     M_new, H_new, H_audio, M_sum_new, phase_wrapped
   with {
     midpoint = ma.frac((phase + substep_phase_92 * 0.5) / two_pi) * two_pi;
-    bias_offset = sin(midpoint) + bias_asym * sin(2.0 * midpoint);
+    bias_offset = sin(midpoint) + bias_asym_s * sin(2.0 * midpoint);
     step_result = ja_substep(bias_offset, M_prev, H_prev, H_audio);
     M_new = ba.selector(0, 2, step_result);
     H_new = ba.selector(1, 2, step_result);
@@ -118,7 +119,7 @@ with {
     M_new, H_new, H_audio, M_sum_new, phase_wrapped
   with {
     midpoint = ma.frac((phase + substep_phase_44 * 0.5) / two_pi) * two_pi;
-    bias_offset = sin(midpoint) + bias_asym * sin(2.0 * midpoint);
+    bias_offset = sin(midpoint) + bias_asym_s * sin(2.0 * midpoint);
     step_result = ja_substep(bias_offset, M_prev, H_prev, H_audio);
     M_new = ba.selector(0, 2, step_result);
     H_new = ba.selector(1, 2, step_result);
@@ -132,7 +133,7 @@ with {
     M_new, H_new, H_audio, M_sum_new, phase_wrapped
   with {
     midpoint = ma.frac((phase + substep_phase_28 * 0.5) / two_pi) * two_pi;
-    bias_offset = sin(midpoint) + bias_asym * sin(2.0 * midpoint);
+    bias_offset = sin(midpoint) + bias_asym_s * sin(2.0 * midpoint);
     step_result = ja_substep(bias_offset, M_prev, H_prev, H_audio);
     M_new = ba.selector(0, 2, step_result);
     H_new = ba.selector(1, 2, step_result);
@@ -195,7 +196,7 @@ with {
   // ===== Asym compensation (dB) - linear from 0dB at asym=0 =====
   // K92: -1.8dB at 0.5, K44: -4.9dB at 0.5, K28: -10.5dB at 0.5
   asym_slope = ba.selectn(3, quality_mode, -1.8, -4.9, -8.2);
-  asym_comp_db = bias_asym * asym_slope;
+  asym_comp_db = bias_asym_s * asym_slope;
   asym_comp = ba.db2linear(asym_comp_db);
 
   // ===== FSM stage =====
