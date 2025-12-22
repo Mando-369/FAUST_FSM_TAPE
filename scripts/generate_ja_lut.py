@@ -9,19 +9,20 @@ and look up the remainder from the LUT.
 The LUT maps (M_in, HAudio) -> (M_end, sumM_rest)
 
 Features:
-- RK4 integration for improved accuracy
+- RK4 integration (highest quality, matches C++ JAHysteresisScheduler)
+- Physics exactly matching C++ (no soft clamp, sigma=1e-6)
 - Configurable number of real substeps before LUT
 - Validation metrics comparing LUT vs full computation
 - Catmull-Rom interpolation in FAUST output
 
 Usage:
-    python generate_ja_lut.py --mode K121 --real-substeps 12 --use-rk4 --validate
+    python generate_ja_lut.py --mode K116 --bias-presets --output-dir ../faust/dev/lib_latest_proto
 """
 
 import numpy as np
 import argparse
 from pathlib import Path
-from typing import Tuple, NamedTuple, Callable
+from typing import Tuple, NamedTuple
 import time
 
 
@@ -70,20 +71,21 @@ class ModeConfigVariant(NamedTuple):
 
 
 # Mode configurations
-# Pattern: half-integer cycles + odd substeps = rich harmonic content
 # Integer cycles avoid bias leakage (12kHz tone)
+# Prime substeps per cycle reduce coherent aliasing
 MODES = {
-    'K28': ModeConfig('K28', 1.5, 18),
-    'K45': ModeConfig('K45', 2.5, 18),
-    'K63': ModeConfig('K63', 3.5, 18),
-    'K96': ModeConfig('K96', 4.0, 24),   # 4 integer cycles × 24 = 96 (no bias leakage)
-    'K99': ModeConfig('K99', 4.5, 22),
-    'K121': ModeConfig('K121', 5.5, 22),
-    'K187': ModeConfig('K187', 8.5, 22),
-    'K253': ModeConfig('K253', 11.5, 22),
-    'K495': ModeConfig('K495', 22.5, 22),
-    'K1045': ModeConfig('K1045', 47.5, 22),
-    'K2101': ModeConfig('K2101', 95.5, 22),
+    'K15': ModeConfig('K15', 0.5, 30),    # 0.5 cycle × 30 = 15 (for cascaded 8×, total K120)
+    'K29': ModeConfig('K29', 1.0, 29),    # 1 cycle × 29 prime = 29 (for cascaded 4×)
+    'K39': ModeConfig('K39', 1.33, 29),   # 1.33 cycles × 29 = 39 (for cascaded 3×, total K117)
+    'K58': ModeConfig('K58', 2.0, 29),    # 2 cycles × 29 prime = 58 (for cascaded 2×)
+    'K116': ModeConfig('K116', 4.0, 29),  # 4 integer cycles × 29 prime = 116 (default)
+}
+
+# Bias presets for lite version (different LUTs per bias level)
+BIAS_PRESETS = {
+    'low': 0.29,
+    'mid': 0.47,
+    'high': 0.74,
 }
 
 
@@ -95,8 +97,8 @@ def generate_bias_lut(phase_span: float, total_substeps: int) -> np.ndarray:
     return np.sin((indices + 0.5) * dphi)
 
 
-def get_derived_constants(physics: PhysicsParams, diff_scale: float = 1.0) -> dict:
-    """Compute derived constants from physics parameters"""
+def get_derived_constants(physics: PhysicsParams) -> dict:
+    """Compute derived constants from physics parameters (matches C++ JAHysteresisScheduler)"""
     Ms_safe = max(physics.Ms, 1e-6)
     a_norm = physics.a_density / Ms_safe
     return {
@@ -106,41 +108,41 @@ def get_derived_constants(physics: PhysicsParams, diff_scale: float = 1.0) -> di
         'inv_a_norm': 1.0 / max(a_norm, 1e-9),
         'k_norm': physics.k_pinning / Ms_safe,
         'c_norm': physics.c_reversibility,
-        'diff_scale': diff_scale,  # Soft clamp on (Man_e - M) for stabilization
-        'sigma': 1e-3,  # Safety margin for pinning term (matches DSP)
+        'sigma': 1e-6,  # Matches C++ (was 1e-3)
     }
 
 
-def ja_dMdH(M: float, H_new: float, H_prev: float, consts: dict) -> float:
+def ja_dMdH(M: float, H: float, dH_sign: float, consts: dict) -> float:
     """
     Compute dM/dH for JA hysteresis (the derivative).
-    Used by both Euler and RK4 methods.
+    Matches C++ JAHysteresisScheduler::computeDMdH exactly.
+
+    Args:
+        M: Current magnetization
+        H: Current field strength
+        dH_sign: Sign of dH for direction (passed separately for RK4 consistency)
+        consts: Physics constants
     """
-    dH = H_new - H_prev
-    He = H_new + consts['alpha_norm'] * M
+    He = H + consts['alpha_norm'] * M
 
     x_man = He * consts['inv_a_norm']
     Man_e = np.tanh(x_man)
     Man_e2 = Man_e * Man_e
     dMan_dH = (1.0 - Man_e2) * consts['inv_a_norm']
 
-    # Soft clamp on (Man_e - M) for stabilization (matches DSP diff_scale)
+    # No soft clamp - matches C++ exactly
     diff = Man_e - M
-    diff_scale = consts.get('diff_scale', 1.0)
-    diff_clamped = diff / (1.0 + abs(diff) * diff_scale)
 
-    direction = 1.0 if dH >= 0.0 else -1.0
-    pin = direction * consts['k_norm'] - consts['alpha_norm'] * diff_clamped
-    sigma = consts.get('sigma', 1e-3)
-    inv_pin = 1.0 / (pin + sigma)
+    direction = 1.0 if dH_sign >= 0.0 else -1.0
+    pin = direction * consts['k_norm'] - consts['alpha_norm'] * diff
+    inv_pin = 1.0 / (pin + consts['sigma'])
 
     denom = 1.0 - consts['c_norm'] * consts['alpha_norm'] * dMan_dH
-    inv_denom = 1.0 / (denom + 1e-9)
 
-    return (consts['c_norm'] * dMan_dH + diff_clamped * inv_pin) * inv_denom
+    return (consts['c_norm'] * dMan_dH + diff * inv_pin) / (denom + 1e-9)
 
 
-def ja_substep_euler(
+def ja_substep(
     M_prev: float,
     H_prev: float,
     H_audio: float,
@@ -149,36 +151,8 @@ def ja_substep_euler(
     consts: dict
 ) -> Tuple[float, float]:
     """
-    Execute one JA substep using Euler integration.
-    Returns (M_new, H_new).
-    """
-    H_new = H_audio + bias_amplitude * bias_offset
-    dH = H_new - H_prev
-
-    dMdH = ja_dMdH(M_prev, H_new, H_prev, consts)
-    dM_step = dMdH * dH
-
-    M_new = np.clip(M_prev + dM_step, -1.0, 1.0)
-    return M_new, H_new
-
-
-def ja_substep_rk4(
-    M_prev: float,
-    H_prev: float,
-    H_audio: float,
-    bias_offset: float,
-    bias_amplitude: float,
-    consts: dict
-) -> Tuple[float, float]:
-    """
-    Execute one JA substep using RK4 integration.
-    Returns (M_new, H_new).
-
-    RK4 samples the derivative at 4 points for better accuracy:
-    - k1: slope at start
-    - k2: slope at midpoint using k1
-    - k3: slope at midpoint using k2
-    - k4: slope at end using k3
+    Execute one JA substep using RK4 integration (highest quality).
+    Matches C++ JAHysteresisScheduler::executeSubstepRK4 exactly.
     """
     H_new = H_audio + bias_amplitude * bias_offset
     dH = H_new - H_prev
@@ -186,23 +160,31 @@ def ja_substep_rk4(
     if abs(dH) < 1e-12:
         return M_prev, H_new
 
-    # RK4 stages - integrate M from H_prev to H_new
-    # Stage 1: slope at start
-    k1 = ja_dMdH(M_prev, H_prev, H_prev, consts) * dH
+    # dH_sign stays constant across all RK4 stages (matches C++)
+    dH_sign = dH
+    h = dH  # step size
 
-    # Stage 2: slope at midpoint using k1
-    H_mid = H_prev + 0.5 * dH
-    k2 = ja_dMdH(M_prev + 0.5 * k1, H_mid, H_prev, consts) * dH
+    # k1: slope at start point
+    k1 = ja_dMdH(M_prev, H_prev, dH_sign, consts)
 
-    # Stage 3: slope at midpoint using k2
-    k3 = ja_dMdH(M_prev + 0.5 * k2, H_mid, H_prev, consts) * dH
+    # k2: slope at midpoint using k1
+    M2 = M_prev + 0.5 * k1 * h
+    H2 = H_prev + 0.5 * h
+    k2 = ja_dMdH(M2, H2, dH_sign, consts)
 
-    # Stage 4: slope at end using k3
-    k4 = ja_dMdH(M_prev + k3, H_new, H_prev, consts) * dH
+    # k3: slope at midpoint using k2
+    M3 = M_prev + 0.5 * k2 * h
+    H3 = H_prev + 0.5 * h
+    k3 = ja_dMdH(M3, H3, dH_sign, consts)
 
-    # Weighted average
-    M_new = M_prev + (k1 + 2.0*k2 + 2.0*k3 + k4) / 6.0
-    M_new = np.clip(M_new, -1.0, 1.0)
+    # k4: slope at endpoint using k3
+    M4 = M_prev + k3 * h
+    H4 = H_new
+    k4 = ja_dMdH(M4, H4, dH_sign, consts)
+
+    # Weighted average of slopes
+    dM = (k1 + 2.0 * k2 + 2.0 * k3 + k4) * h / 6.0
+    M_new = np.clip(M_prev + dM, -1.0, 1.0)
 
     return M_new, H_new
 
@@ -212,11 +194,10 @@ def compute_full_response(
     H_audio: float,
     bias_lut: np.ndarray,
     bias_amplitude: float,
-    consts: dict,
-    substep_func: Callable
+    consts: dict
 ) -> Tuple[float, float]:
     """
-    Compute ALL substeps with real physics.
+    Compute ALL substeps with RK4 physics.
     Returns (M_end, sum_M_all).
     Used for validation.
     """
@@ -226,7 +207,7 @@ def compute_full_response(
     sum_M = 0.0
 
     for i in range(n):
-        M, H = substep_func(M, H, H_audio, bias_lut[i], bias_amplitude, consts)
+        M, H = ja_substep(M, H, H_audio, bias_lut[i], bias_amplitude, consts)
         sum_M += M
 
     return M, sum_M
@@ -239,11 +220,10 @@ def compute_real_substeps(
     bias_lut: np.ndarray,
     bias_amplitude: float,
     consts: dict,
-    num_real: int,
-    substep_func: Callable
+    num_real: int
 ) -> Tuple[float, float, float]:
     """
-    Compute the first num_real substeps with real physics.
+    Compute the first num_real substeps with RK4 physics.
     Returns (M_after_real, H_after_real, sum_M_real).
     """
     M = M_init
@@ -251,7 +231,7 @@ def compute_real_substeps(
     sum_M = 0.0
 
     for i in range(num_real):
-        M, H = substep_func(M, H, H_audio, bias_lut[i], bias_amplitude, consts)
+        M, H = ja_substep(M, H, H_audio, bias_lut[i], bias_amplitude, consts)
         sum_M += M
 
     return M, H, sum_M
@@ -263,24 +243,15 @@ def compute_remainder_response(
     bias_lut: np.ndarray,
     bias_amplitude: float,
     consts: dict,
-    start_substep: int,
-    substep_func: Callable
+    start_substep: int
 ) -> Tuple[float, float]:
     """
     Compute substeps start_substep..N-1 given the state after real substeps.
+    Uses RK4 integration (highest quality).
 
     Returns (M_end, sumM_rest) where:
     - M_end: final magnetization after all substeps
     - sumM_rest: sum of magnetizations from substeps start_substep..N-1
-
-    Args:
-        M_start: Magnetization after the last real substep
-        H_audio: Audio input signal
-        bias_lut: Precomputed bias oscillator values
-        bias_amplitude: Bias amplitude (level * scale)
-        consts: Derived physics constants
-        start_substep: First substep to compute (0-indexed)
-        substep_func: Integration function (Euler or RK4)
     """
     n = len(bias_lut)
 
@@ -296,7 +267,7 @@ def compute_remainder_response(
 
     # Run substeps from start_substep to N-1
     for i in range(start_substep, n):
-        M, H = substep_func(M, H, H_audio, bias_lut[i], bias_amplitude, consts)
+        M, H = ja_substep(M, H, H_audio, bias_lut[i], bias_amplitude, consts)
         sum_M += M
 
     return M, sum_M
@@ -312,15 +283,14 @@ def generate_2d_lut(
     m_size: int = 65,
     h_size: int = 129,
     h_range: Tuple[float, float] = (-1.0, 1.0),
-    real_substeps: int = 1,
-    use_rk4: bool = False
+    real_substeps: int = 1
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Generate the 2D LUT for (M_in, HAudio) -> (M_end, sumM_rest).
+    Uses RK4 integration (highest quality, matches C++).
 
     Args:
         real_substeps: Number of substeps computed in real-time (LUT starts after this)
-        use_rk4: Use RK4 integration instead of Euler
 
     Returns:
         m_grid: M axis values
@@ -331,9 +301,6 @@ def generate_2d_lut(
     bias_amplitude = bias_level * bias_scale
     bias_lut = generate_bias_lut(phase_span, total_substeps)
     consts = get_derived_constants(physics)
-
-    substep_func = ja_substep_rk4 if use_rk4 else ja_substep_euler
-    method_name = "RK4" if use_rk4 else "Euler"
 
     # Create grids
     m_grid = np.linspace(-1.0, 1.0, m_size)
@@ -351,7 +318,7 @@ def generate_2d_lut(
     print(f"  Total substeps: {total_substeps}")
     print(f"  Real substeps (FAUST): {real_substeps} ({100*real_substeps/total_substeps:.1f}%)")
     print(f"  LUT substeps: {real_substeps}..{total_substeps-1} ({total_substeps - real_substeps} steps)")
-    print(f"  Integration method: {method_name}")
+    print(f"  Integration: RK4 (highest quality)")
     print(f"  Grid: {m_size}x{h_size} = {total_points} points")
     print(f"  Bias amplitude: {bias_amplitude:.3f}")
 
@@ -363,8 +330,7 @@ def generate_2d_lut(
             # LUT computes the remainder
             M_end, sumM_rest = compute_remainder_response(
                 M_in, H_audio, bias_lut, bias_amplitude, consts,
-                start_substep=real_substeps,
-                substep_func=substep_func
+                start_substep=real_substeps
             )
             lut_M_end[i, j] = M_end
             lut_sumM_rest[i, j] = sumM_rest
@@ -393,11 +359,10 @@ def validate_lut(
     bias_level: float,
     bias_scale: float,
     real_substeps: int,
-    use_rk4: bool,
     sample_every: int = 4
 ) -> dict:
     """
-    Validate LUT accuracy by comparing against full physics computation.
+    Validate LUT accuracy by comparing against full RK4 physics computation.
 
     Tests at sampled grid points:
     1. Compute real substeps 0..real_substeps-1
@@ -411,7 +376,6 @@ def validate_lut(
     bias_amplitude = bias_level * bias_scale
     bias_lut = generate_bias_lut(phase_span, total_substeps)
     consts = get_derived_constants(physics)
-    substep_func = ja_substep_rk4 if use_rk4 else ja_substep_euler
 
     m_size, h_size = lut_M_end.shape
 
@@ -429,7 +393,7 @@ def validate_lut(
 
             # Full physics: compute ALL substeps from M_init
             M_full_end, sum_M_full = compute_full_response(
-                M_init, H_audio, bias_lut, bias_amplitude, consts, substep_func
+                M_init, H_audio, bias_lut, bias_amplitude, consts
             )
 
             # LUT approach: compute real substeps, then lookup
@@ -441,7 +405,7 @@ def validate_lut(
             # Compute real substeps
             M_after_real, H_after_real, sum_M_real = compute_real_substeps(
                 M_init, H_audio, H_audio, bias_lut, bias_amplitude, consts,
-                real_substeps, substep_func
+                real_substeps
             )
 
             # LUT lookup (bilinear interpolation for validation)
@@ -587,9 +551,10 @@ def export_faust_lib(
     total_substeps: int,
     real_substeps: int,
     phase_span: float,
-    output_path: Path
+    output_path: Path,
+    interpolation: str = 'bicubic'
 ):
-    """Export LUT as FAUST library file with Catmull-Rom interpolation"""
+    """Export LUT as FAUST library file with bilinear or bicubic interpolation"""
     m_size, h_size = lut_M_end.shape
 
     flat_M_end = lut_M_end.flatten()
@@ -649,94 +614,136 @@ def export_faust_lib(
         f.write("// Normalize H to [0, 1] range\n")
         f.write(f"ja_lut_{prefix}_h_norm(h) = (h - ja_lut_{prefix}_h_min) / (ja_lut_{prefix}_h_max - ja_lut_{prefix}_h_min);\n\n")
 
-        # Catmull-Rom helper
-        f.write("// 1D Catmull-Rom interpolation: p0,p1,p2,p3 are 4 consecutive points, t in [0,1]\n")
-        f.write(f"ja_catmull_rom_{prefix}(p0, p1, p2, p3, t) = 0.5 * (\n")
-        f.write("    2.0*p1 +\n")
-        f.write("    (-p0 + p2) * t +\n")
-        f.write("    (2.0*p0 - 5.0*p1 + 4.0*p2 - p3) * t * t +\n")
-        f.write("    (-p0 + 3.0*p1 - 3.0*p2 + p3) * t * t * t\n")
-        f.write(");\n\n")
+        if interpolation == 'bicubic':
+            # Catmull-Rom helper function
+            f.write("// Catmull-Rom spline interpolation\n")
+            f.write(f"ja_lut_{prefix}_catmull(t, p0, p1, p2, p3) = \n")
+            f.write("    0.5 * ((2.0*p1) + (-p0 + p2)*t + (2.0*p0 - 5.0*p1 + 4.0*p2 - p3)*t2 + (-p0 + 3.0*p1 - 3.0*p2 + p3)*t3)\n")
+            f.write("with { t2 = t*t; t3 = t2*t; };\n\n")
 
-        # Catmull-Rom interpolation for M_end
-        f.write("// Separable Catmull-Rom interpolation lookup for M_end\n")
-        f.write(f"ja_lookup_m_end_{prefix}(m, h) = result\n")
-        f.write("with {\n")
-        f.write(f"    m_n = max(0.0, min(1.0, ja_lut_{prefix}_m_norm(m)));\n")
-        f.write(f"    h_n = max(0.0, min(1.0, ja_lut_{prefix}_h_norm(h)));\n")
-        f.write("    \n")
-        f.write(f"    m_scaled = m_n * (ja_lut_{prefix}_m_size - 1);\n")
-        f.write(f"    h_scaled = h_n * (ja_lut_{prefix}_h_size - 1);\n")
-        f.write("    \n")
-        f.write("    m_idx = int(floor(m_scaled));\n")
-        f.write("    h_idx = int(floor(h_scaled));\n")
-        f.write("    \n")
-        f.write("    m_frac = m_scaled - float(m_idx);\n")
-        f.write("    h_frac = h_scaled - float(h_idx);\n")
-        f.write("    \n")
-        f.write("    // Clamp indices for 4x4 Catmull-Rom\n")
-        f.write(f"    m0 = max(0, m_idx - 1);\n")
-        f.write(f"    m1 = max(0, min(m_idx, ja_lut_{prefix}_m_size - 1));\n")
-        f.write(f"    m2 = max(0, min(m_idx + 1, ja_lut_{prefix}_m_size - 1));\n")
-        f.write(f"    m3 = min(m_idx + 2, ja_lut_{prefix}_m_size - 1);\n")
-        f.write("    \n")
-        f.write(f"    h0 = max(0, h_idx - 1);\n")
-        f.write(f"    h1 = max(0, min(h_idx, ja_lut_{prefix}_h_size - 1));\n")
-        f.write(f"    h2 = max(0, min(h_idx + 1, ja_lut_{prefix}_h_size - 1));\n")
-        f.write(f"    h3 = min(h_idx + 2, ja_lut_{prefix}_h_size - 1);\n")
-        f.write("    \n")
-        f.write("    // Fetch 16 points (4x4 grid)\n")
-        for mi in range(4):
-            for hi in range(4):
-                f.write(f"    v{mi}{hi} = ja_lut_{prefix}_m_end, ja_lut_{prefix}_idx(m{mi}, h{hi}) : rdtable;\n")
-        f.write("    \n")
-        f.write("    // Interpolate 4 columns along H axis\n")
-        for mi in range(4):
-            f.write(f"    col{mi} = ja_catmull_rom_{prefix}(v{mi}0, v{mi}1, v{mi}2, v{mi}3, h_frac);\n")
-        f.write("    \n")
-        f.write("    // Interpolate along M axis\n")
-        f.write(f"    result = ja_catmull_rom_{prefix}(col0, col1, col2, col3, m_frac);\n")
-        f.write("};\n\n")
+            # Bicubic (Catmull-Rom) interpolation lookup for M_end
+            f.write("// Bicubic (Catmull-Rom) interpolation lookup for M_end (16 points)\n")
+            f.write(f"ja_lookup_m_end_{prefix}(m, h) = result\n")
+            f.write("with {\n")
+            f.write(f"    m_n = max(0.0, min(1.0, ja_lut_{prefix}_m_norm(m)));\n")
+            f.write(f"    h_n = max(0.0, min(1.0, ja_lut_{prefix}_h_norm(h)));\n")
+            f.write("    \n")
+            f.write("    // Scale to grid, clamp to valid bicubic range [1, size-3]\n")
+            f.write(f"    m_scaled = max(1.0, min(m_n * (ja_lut_{prefix}_m_size - 1), ja_lut_{prefix}_m_size - 2.0001));\n")
+            f.write(f"    h_scaled = max(1.0, min(h_n * (ja_lut_{prefix}_h_size - 1), ja_lut_{prefix}_h_size - 2.0001));\n")
+            f.write("    \n")
+            f.write("    // Base index and fractional part\n")
+            f.write("    mi = floor(m_scaled);\n")
+            f.write("    hi = floor(h_scaled);\n")
+            f.write("    mt = m_scaled - mi;\n")
+            f.write("    ht = h_scaled - hi;\n")
+            f.write("    \n")
+            f.write("    // 4x4 grid indices (mi-1 to mi+2, hi-1 to hi+2)\n")
+            f.write(f"    fetch(dm, dh) = ja_lut_{prefix}_m_end, ja_lut_{prefix}_idx(mi + dm, hi + dh) : rdtable;\n")
+            f.write("    \n")
+            f.write("    // Fetch 16 points\n")
+            f.write("    p00 = fetch(-1, -1); p01 = fetch(-1, 0); p02 = fetch(-1, 1); p03 = fetch(-1, 2);\n")
+            f.write("    p10 = fetch( 0, -1); p11 = fetch( 0, 0); p12 = fetch( 0, 1); p13 = fetch( 0, 2);\n")
+            f.write("    p20 = fetch( 1, -1); p21 = fetch( 1, 0); p22 = fetch( 1, 1); p23 = fetch( 1, 2);\n")
+            f.write("    p30 = fetch( 2, -1); p31 = fetch( 2, 0); p32 = fetch( 2, 1); p33 = fetch( 2, 2);\n")
+            f.write("    \n")
+            f.write("    // Interpolate 4 rows along H axis\n")
+            f.write(f"    row0 = ja_lut_{prefix}_catmull(ht, p00, p01, p02, p03);\n")
+            f.write(f"    row1 = ja_lut_{prefix}_catmull(ht, p10, p11, p12, p13);\n")
+            f.write(f"    row2 = ja_lut_{prefix}_catmull(ht, p20, p21, p22, p23);\n")
+            f.write(f"    row3 = ja_lut_{prefix}_catmull(ht, p30, p31, p32, p33);\n")
+            f.write("    \n")
+            f.write("    // Interpolate along M axis\n")
+            f.write(f"    result = ja_lut_{prefix}_catmull(mt, row0, row1, row2, row3);\n")
+            f.write("};\n\n")
 
-        # Catmull-Rom interpolation for sumM_rest
-        f.write("// Separable Catmull-Rom interpolation lookup for sumM_rest\n")
-        f.write(f"ja_lookup_sum_m_rest_{prefix}(m, h) = result\n")
-        f.write("with {\n")
-        f.write(f"    m_n = max(0.0, min(1.0, ja_lut_{prefix}_m_norm(m)));\n")
-        f.write(f"    h_n = max(0.0, min(1.0, ja_lut_{prefix}_h_norm(h)));\n")
-        f.write("    \n")
-        f.write(f"    m_scaled = m_n * (ja_lut_{prefix}_m_size - 1);\n")
-        f.write(f"    h_scaled = h_n * (ja_lut_{prefix}_h_size - 1);\n")
-        f.write("    \n")
-        f.write("    m_idx = int(floor(m_scaled));\n")
-        f.write("    h_idx = int(floor(h_scaled));\n")
-        f.write("    \n")
-        f.write("    m_frac = m_scaled - float(m_idx);\n")
-        f.write("    h_frac = h_scaled - float(h_idx);\n")
-        f.write("    \n")
-        f.write("    // Clamp indices for 4x4 Catmull-Rom\n")
-        f.write(f"    m0 = max(0, m_idx - 1);\n")
-        f.write(f"    m1 = max(0, min(m_idx, ja_lut_{prefix}_m_size - 1));\n")
-        f.write(f"    m2 = max(0, min(m_idx + 1, ja_lut_{prefix}_m_size - 1));\n")
-        f.write(f"    m3 = min(m_idx + 2, ja_lut_{prefix}_m_size - 1);\n")
-        f.write("    \n")
-        f.write(f"    h0 = max(0, h_idx - 1);\n")
-        f.write(f"    h1 = max(0, min(h_idx, ja_lut_{prefix}_h_size - 1));\n")
-        f.write(f"    h2 = max(0, min(h_idx + 1, ja_lut_{prefix}_h_size - 1));\n")
-        f.write(f"    h3 = min(h_idx + 2, ja_lut_{prefix}_h_size - 1);\n")
-        f.write("    \n")
-        f.write("    // Fetch 16 points (4x4 grid)\n")
-        for mi in range(4):
-            for hi in range(4):
-                f.write(f"    v{mi}{hi} = ja_lut_{prefix}_sum_m_rest, ja_lut_{prefix}_idx(m{mi}, h{hi}) : rdtable;\n")
-        f.write("    \n")
-        f.write("    // Interpolate 4 columns along H axis\n")
-        for mi in range(4):
-            f.write(f"    col{mi} = ja_catmull_rom_{prefix}(v{mi}0, v{mi}1, v{mi}2, v{mi}3, h_frac);\n")
-        f.write("    \n")
-        f.write("    // Interpolate along M axis\n")
-        f.write(f"    result = ja_catmull_rom_{prefix}(col0, col1, col2, col3, m_frac);\n")
-        f.write("};\n")
+            # Bicubic (Catmull-Rom) interpolation lookup for sumM_rest
+            f.write("// Bicubic (Catmull-Rom) interpolation lookup for sumM_rest (16 points)\n")
+            f.write(f"ja_lookup_sum_m_rest_{prefix}(m, h) = result\n")
+            f.write("with {\n")
+            f.write(f"    m_n = max(0.0, min(1.0, ja_lut_{prefix}_m_norm(m)));\n")
+            f.write(f"    h_n = max(0.0, min(1.0, ja_lut_{prefix}_h_norm(h)));\n")
+            f.write("    \n")
+            f.write("    // Scale to grid, clamp to valid bicubic range [1, size-3]\n")
+            f.write(f"    m_scaled = max(1.0, min(m_n * (ja_lut_{prefix}_m_size - 1), ja_lut_{prefix}_m_size - 2.0001));\n")
+            f.write(f"    h_scaled = max(1.0, min(h_n * (ja_lut_{prefix}_h_size - 1), ja_lut_{prefix}_h_size - 2.0001));\n")
+            f.write("    \n")
+            f.write("    // Base index and fractional part\n")
+            f.write("    mi = floor(m_scaled);\n")
+            f.write("    hi = floor(h_scaled);\n")
+            f.write("    mt = m_scaled - mi;\n")
+            f.write("    ht = h_scaled - hi;\n")
+            f.write("    \n")
+            f.write("    // 4x4 grid indices (mi-1 to mi+2, hi-1 to hi+2)\n")
+            f.write(f"    fetch(dm, dh) = ja_lut_{prefix}_sum_m_rest, ja_lut_{prefix}_idx(mi + dm, hi + dh) : rdtable;\n")
+            f.write("    \n")
+            f.write("    // Fetch 16 points\n")
+            f.write("    p00 = fetch(-1, -1); p01 = fetch(-1, 0); p02 = fetch(-1, 1); p03 = fetch(-1, 2);\n")
+            f.write("    p10 = fetch( 0, -1); p11 = fetch( 0, 0); p12 = fetch( 0, 1); p13 = fetch( 0, 2);\n")
+            f.write("    p20 = fetch( 1, -1); p21 = fetch( 1, 0); p22 = fetch( 1, 1); p23 = fetch( 1, 2);\n")
+            f.write("    p30 = fetch( 2, -1); p31 = fetch( 2, 0); p32 = fetch( 2, 1); p33 = fetch( 2, 2);\n")
+            f.write("    \n")
+            f.write("    // Interpolate 4 rows along H axis\n")
+            f.write(f"    row0 = ja_lut_{prefix}_catmull(ht, p00, p01, p02, p03);\n")
+            f.write(f"    row1 = ja_lut_{prefix}_catmull(ht, p10, p11, p12, p13);\n")
+            f.write(f"    row2 = ja_lut_{prefix}_catmull(ht, p20, p21, p22, p23);\n")
+            f.write(f"    row3 = ja_lut_{prefix}_catmull(ht, p30, p31, p32, p33);\n")
+            f.write("    \n")
+            f.write("    // Interpolate along M axis\n")
+            f.write(f"    result = ja_lut_{prefix}_catmull(mt, row0, row1, row2, row3);\n")
+            f.write("};\n")
+        else:
+            # Bilinear interpolation lookup for M_end (4 points - faster compilation)
+            f.write("// Bilinear interpolation lookup for M_end (4 points)\n")
+            f.write(f"ja_lookup_m_end_{prefix}(m, h) = result\n")
+            f.write("with {\n")
+            f.write(f"    m_n = max(0.0, min(1.0, ja_lut_{prefix}_m_norm(m)));\n")
+            f.write(f"    h_n = max(0.0, min(1.0, ja_lut_{prefix}_h_norm(h)));\n")
+            f.write("    \n")
+            f.write("    // Scale to grid, clamp to valid bilinear range [0, size-2]\n")
+            f.write(f"    m_scaled = max(0.0, min(m_n * (ja_lut_{prefix}_m_size - 1), ja_lut_{prefix}_m_size - 1.0001));\n")
+            f.write(f"    h_scaled = max(0.0, min(h_n * (ja_lut_{prefix}_h_size - 1), ja_lut_{prefix}_h_size - 1.0001));\n")
+            f.write("    \n")
+            f.write("    // Base index and fractional part\n")
+            f.write("    mi = floor(m_scaled);\n")
+            f.write("    hi = floor(h_scaled);\n")
+            f.write("    mt = m_scaled - mi;\n")
+            f.write("    ht = h_scaled - hi;\n")
+            f.write("    \n")
+            f.write("    // Fetch 4 corner points\n")
+            f.write(f"    fetch(dm, dh) = ja_lut_{prefix}_m_end, ja_lut_{prefix}_idx(mi + dm, hi + dh) : rdtable;\n")
+            f.write("    p00 = fetch(0, 0); p01 = fetch(0, 1);\n")
+            f.write("    p10 = fetch(1, 0); p11 = fetch(1, 1);\n")
+            f.write("    \n")
+            f.write("    // Bilinear interpolation\n")
+            f.write("    result = (1.0 - mt) * ((1.0 - ht) * p00 + ht * p01) + mt * ((1.0 - ht) * p10 + ht * p11);\n")
+            f.write("};\n\n")
+
+            # Bilinear interpolation lookup for sumM_rest (4 points)
+            f.write("// Bilinear interpolation lookup for sumM_rest (4 points)\n")
+            f.write(f"ja_lookup_sum_m_rest_{prefix}(m, h) = result\n")
+            f.write("with {\n")
+            f.write(f"    m_n = max(0.0, min(1.0, ja_lut_{prefix}_m_norm(m)));\n")
+            f.write(f"    h_n = max(0.0, min(1.0, ja_lut_{prefix}_h_norm(h)));\n")
+            f.write("    \n")
+            f.write("    // Scale to grid, clamp to valid bilinear range [0, size-2]\n")
+            f.write(f"    m_scaled = max(0.0, min(m_n * (ja_lut_{prefix}_m_size - 1), ja_lut_{prefix}_m_size - 1.0001));\n")
+            f.write(f"    h_scaled = max(0.0, min(h_n * (ja_lut_{prefix}_h_size - 1), ja_lut_{prefix}_h_size - 1.0001));\n")
+            f.write("    \n")
+            f.write("    // Base index and fractional part\n")
+            f.write("    mi = floor(m_scaled);\n")
+            f.write("    hi = floor(h_scaled);\n")
+            f.write("    mt = m_scaled - mi;\n")
+            f.write("    ht = h_scaled - hi;\n")
+            f.write("    \n")
+            f.write("    // Fetch 4 corner points\n")
+            f.write(f"    fetch(dm, dh) = ja_lut_{prefix}_sum_m_rest, ja_lut_{prefix}_idx(mi + dm, hi + dh) : rdtable;\n")
+            f.write("    p00 = fetch(0, 0); p01 = fetch(0, 1);\n")
+            f.write("    p10 = fetch(1, 0); p11 = fetch(1, 1);\n")
+            f.write("    \n")
+            f.write("    // Bilinear interpolation\n")
+            f.write("    result = (1.0 - mt) * ((1.0 - ht) * p00 + ht * p01) + mt * ((1.0 - ht) * p10 + ht * p11);\n")
+            f.write("};\n")
 
     print(f"  Exported FAUST library: {output_path}")
 
@@ -755,8 +762,7 @@ def generate_single_lut(name: str, phase_span: float, total_substeps: int,
         m_size=args.m_size,
         h_size=args.h_size,
         h_range=tuple(args.h_range),
-        real_substeps=args.real_substeps,
-        use_rk4=args.use_rk4
+        real_substeps=args.real_substeps
     )
 
     # Export files
@@ -766,7 +772,8 @@ def generate_single_lut(name: str, phase_span: float, total_substeps: int,
     export_cpp_header(m_grid, h_grid, lut_M_end, lut_sumM_rest, name,
                       total_substeps, args.real_substeps, cpp_path)
     export_faust_lib(m_grid, h_grid, lut_M_end, lut_sumM_rest, name,
-                     total_substeps, args.real_substeps, phase_span, faust_path)
+                     total_substeps, args.real_substeps, phase_span, faust_path,
+                     args.interpolation)
 
     print(f"  M_end range: [{lut_M_end.min():.6f}, {lut_M_end.max():.6f}]")
     print(f"  sumM_rest range: [{lut_sumM_rest.min():.6f}, {lut_sumM_rest.max():.6f}]")
@@ -778,7 +785,7 @@ def generate_single_lut(name: str, phase_span: float, total_substeps: int,
             m_grid, h_grid, lut_M_end, lut_sumM_rest,
             phase_span, total_substeps, physics,
             args.bias_level, args.bias_scale,
-            args.real_substeps, args.use_rk4
+            args.real_substeps
         )
 
     return m_grid, h_grid, lut_M_end, lut_sumM_rest
@@ -786,26 +793,28 @@ def generate_single_lut(name: str, phase_span: float, total_substeps: int,
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Generate JA Hysteresis 2D LUT with RK4 integration and configurable real substeps',
+        description='Generate JA Hysteresis 2D LUT with RK4 integration (highest quality)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic generation with defaults (1 real substep, Euler)
-  python generate_ja_lut.py --mode K121
+  # Basic generation (1 real substep)
+  python generate_ja_lut.py --mode K116
 
-  # 10% real substeps with RK4 (recommended)
-  python generate_ja_lut.py --mode K121 --real-substeps 12 --use-rk4
+  # Generate bias presets (low/mid/high)
+  python generate_ja_lut.py --mode K116 --bias-presets --output-dir ../faust/dev/lib_latest_proto
 
-  # Generate variants (K120, K121, K122) with validation
-  python generate_ja_lut.py --mode K121 --real-substeps 12 --use-rk4 --variants --validate
+  # Generate variants (K115, K116, K117) with validation
+  python generate_ja_lut.py --mode K116 --variants --validate
 
-  # High quality: 20% real substeps
-  python generate_ja_lut.py --mode K121 --real-substeps 24 --use-rk4 --validate
+  # Custom grid size
+  python generate_ja_lut.py --mode K116 --m-size 129 --h-size 257
 """
     )
 
-    parser.add_argument('--mode', choices=list(MODES.keys()), default='K121',
-                        help='Bias mode (default: K121)')
+    parser.add_argument('--mode', choices=list(MODES.keys()), default='K116',
+                        help='Bias mode (default: K116)')
+    parser.add_argument('--bias-presets', action='store_true',
+                        help='Generate LUTs for all bias presets (low=0.29, mid=0.47, high=0.74)')
     parser.add_argument('--variants', action='store_true',
                         help='Generate N-1, N, N+1 variants (same phase span, different substeps)')
     parser.add_argument('--m-size', type=int, default=65,
@@ -821,12 +830,10 @@ Examples:
     parser.add_argument('--output-dir', type=Path, default=Path('.'),
                         help='Output directory (default: current)')
 
-    # New options
     parser.add_argument('--real-substeps', type=int, default=1,
-                        help='Number of substeps computed in real-time before LUT lookup (default: 1). '
-                             'Higher = more "alive" sound but more CPU. 10%% of total is a good starting point.')
-    parser.add_argument('--use-rk4', action='store_true',
-                        help='Use RK4 integration instead of Euler (more accurate, recommended)')
+                        help='Number of substeps computed in real-time before LUT lookup (default: 1).')
+    parser.add_argument('--interpolation', choices=['bilinear', 'bicubic'], default='bicubic',
+                        help='Interpolation method: bilinear (4 points, fast) or bicubic (16 points, smooth). Default: bicubic')
     parser.add_argument('--validate', action='store_true',
                         help='Run validation comparing LUT against full physics computation')
 
@@ -836,33 +843,53 @@ Examples:
     physics = PhysicsParams()
 
     # Validate real_substeps
-    if args.real_substeps < 1:
-        args.real_substeps = 1
-        print("Warning: real-substeps must be >= 1, setting to 1")
+    if args.real_substeps < 0:
+        args.real_substeps = 0
+        print("Warning: real-substeps must be >= 0, setting to 0")
     if args.real_substeps >= mode.total_substeps:
         args.real_substeps = mode.total_substeps - 1
         print(f"Warning: real-substeps must be < total substeps, setting to {args.real_substeps}")
 
     print(f"\n{'='*60}")
-    print(f"JA Hysteresis LUT Generator")
+    print(f"JA Hysteresis LUT Generator (RK4)")
     print(f"{'='*60}")
     print(f"Mode: {mode.name} ({mode.total_substeps} total substeps)")
     print(f"Phase span: {mode.phase_span:.4f} rad ({mode.phase_span/np.pi:.2f}π)")
     print(f"Real substeps: {args.real_substeps} ({100*args.real_substeps/mode.total_substeps:.1f}% of total)")
-    print(f"Integration: {'RK4' if args.use_rk4 else 'Euler'}")
+    print(f"Integration: RK4 (highest quality, matches C++)")
     print(f"Physics: Ms={physics.Ms}, a={physics.a_density}, k={physics.k_pinning}, c={physics.c_reversibility}, α={physics.alpha_coupling}")
     print(f"Grid: M[{args.m_size}] x H[{args.h_size}]")
     print(f"H range: [{args.h_range[0]}, {args.h_range[1]}]")
     print(f"Bias: level={args.bias_level}, scale={args.bias_scale}")
     print(f"Validation: {'Yes' if args.validate else 'No'}")
 
-    if args.variants:
-        print(f"\nVariant mode: Generating N-1, N, N+1")
+    if args.bias_presets:
+        print(f"\nBias presets mode: Generating LUTs for low/mid/high bias levels")
 
     # Create output directory
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.variants:
+    if args.bias_presets:
+        # Generate LUTs for each bias preset
+        for preset_name, bias_level in BIAS_PRESETS.items():
+            lut_name = f"{mode.name}_bias_{preset_name}"
+            original_bias = args.bias_level
+            args.bias_level = bias_level
+            print(f"\n--- Generating {lut_name} (bias_level={bias_level}) ---")
+            generate_single_lut(
+                name=lut_name,
+                phase_span=mode.phase_span,
+                total_substeps=mode.total_substeps,
+                physics=physics,
+                args=args,
+                output_dir=args.output_dir
+            )
+            args.bias_level = original_bias
+        print(f"\n{'='*60}")
+        print(f"Generated {len(BIAS_PRESETS)} bias preset LUTs:")
+        for preset_name, bias_level in BIAS_PRESETS.items():
+            print(f"  {mode.name}_bias_{preset_name}: bias_level={bias_level}")
+    elif args.variants:
         variants = mode.get_variants()
         for variant in variants:
             generate_single_lut(

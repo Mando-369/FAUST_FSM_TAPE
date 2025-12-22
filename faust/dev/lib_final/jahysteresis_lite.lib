@@ -6,21 +6,16 @@
 // magnetization (M) to applied field (H). Combined with a phase-locked bias
 // oscillator for analog tape emulation applications.
 //
-// This is the **LUT-optimized** version with 10 selectable modes (K28-K2101).
-// Uses 2D LUT optimization: 1 real substep + LUT lookup for the rest.
+// This is the **LUT-optimized** version using 3×K29 cascaded lookups with
+// 9 selectable bias presets (0.1-0.9). Each preset has its own precomputed LUT.
 // CPU cost: <1% (vs ~2% for full-physics version).
 //
 // For the full-physics version with runtime-adjustable parameters,
 // see `jahysteresis.lib`.
 //
-// All modes use half-integer bias cycles + odd substeps for rich harmonic content.
-// This ensures opposite bias polarity between adjacent samples, introducing
-// even harmonics that sound warmer and more musical.
-//
-// * Physics Constants
-// * Bias Oscillator Tables
-// * JA Core Functions
-// * LUT-Accelerated Loops (K28-K2101)
+// * Constants
+// * Cascaded Hysteresis Functions
+// * Streaming Hysteresis
 // * FSM Channel Processing
 //
 // It should be used using the `jah` environment:
@@ -36,10 +31,10 @@
 // * Walters, S.J. "Full Spectrum Magnetization" (phase-locked bias oscillator)
 // * <https://github.com/Mando-369/FAUST_FSM_TAPE>
 //
-//######################################################
+//##################################################
 
 declare name "Jiles-Atherton Hysteresis Library (LUT-Optimized)";
-declare version "0.4.0";
+declare version "1.0.0";
 declare author "Thomas Mandolini";
 declare license "BSD";
 declare copyright "2025 Thomas Mandolini";
@@ -47,481 +42,273 @@ declare copyright "2025 Thomas Mandolini";
 // Its official prefix is `jah`.
 
 import("stdfaust.lib");
-import("ja_lut_k28.lib");   // 2D LUT for K28: 1.5 cycles, 27 substeps (ultra lofi)
-import("ja_lut_k45.lib");   // 2D LUT for K45: 2.5 cycles, 45 substeps (lofi)
-import("ja_lut_k63.lib");   // 2D LUT for K63: 3.5 cycles, 63 substeps (vintage)
-import("ja_lut_k99.lib");   // 2D LUT for K99: 4.5 cycles, 99 substeps (warm)
-import("ja_lut_k121.lib");  // 2D LUT for K121: 5.5 cycles, 121 substeps (standard)
-import("ja_lut_k187.lib");  // 2D LUT for K187: 8.5 cycles, 187 substeps (high quality)
-import("ja_lut_k253.lib");  // 2D LUT for K253: 11.5 cycles, 253 substeps (detailed)
-import("ja_lut_k495.lib");  // 2D LUT for K495: 22.5 cycles, 495 substeps (ultra detailed)
-import("ja_lut_k1045.lib"); // 2D LUT for K1045: 47.5 cycles, 1045 substeps (extreme)
-import("ja_lut_k2101.lib"); // 2D LUT for K2101: 95.5 cycles, 2101 substeps (beyond physical)
 
-//================= Physics Constants ===============
-// Jiles-Atherton model parameters for tape oxide.
-// Ms = saturation magnetization, a = domain density,
-// k = pinning, c = reversibility, alpha = interdomain coupling.
-//===================================================
+// LUT imports for 9 bias presets (0.1-0.9)
+// Each LUT uses H range [-40, 40] to cover full +29dB drive range
+import("ja_lut_k29_bias_01.lib");
+import("ja_lut_k29_bias_02.lib");
+import("ja_lut_k29_bias_03.lib");
+import("ja_lut_k29_bias_04.lib");
+import("ja_lut_k29_bias_05.lib");
+import("ja_lut_k29_bias_06.lib");
+import("ja_lut_k29_bias_07.lib");
+import("ja_lut_k29_bias_08.lib");
+import("ja_lut_k29_bias_09.lib");
 
-Ms              = 320.0;
-a_density       = 720.0;
-k_pinning       = 280.0;
-c_reversibility = 0.18;
-alpha_coupling  = 0.015;
+//================= Constants ===============
+// Fixed parameters for LUT-optimized processing.
+// 3×K29 = 87 total substeps with 3 course-corrections per sample.
+//===========================================
 
-// Derived constants (normalized to Ms)
-Ms_safe    = ba.if(Ms > 1e-6, Ms, 1e-6);
-alpha_norm = alpha_coupling;
-a_norm     = a_density / Ms_safe;
-k_norm     = k_pinning / Ms_safe;
-c_norm     = c_reversibility;
-inv_a_norm = 1.0 / a_norm;
+INV_N = 1.0 / 87.0;
+DRIVE_MAKEUP_DB = 15.6;
 
-// Fixed bias amplitude for LUT compatibility
-bias_amp = 0.41 * 11.0;
+// Bias compensation per preset (measured values)
+// Mode 0=0.1, 1=0.2, ... 8=0.9
+BIAS_COMP_01 = -7.5;
+BIAS_COMP_02 = -5.4;
+BIAS_COMP_03 = -2.5;
+BIAS_COMP_04 = 0.4;
+BIAS_COMP_05 = 3.0;
+BIAS_COMP_06 = 5.2;
+BIAS_COMP_07 = 7.1;
+BIAS_COMP_08 = 8.9;
+BIAS_COMP_09 = 10.5;
 
-// Numerical stability constant
-sigma = 1e-6;
+//================= Cascaded Hysteresis Functions ===============
+// 3×K29 cascaded LUT lookups for each bias preset.
+// Each function performs 3 sequential lookups (M1→M2→M_end),
+// totaling 87 effective substeps with 3 course-corrections per sample.
+// Better transient response than single 2×K58.
+//==============================================================
 
-// Precomputed inverse substep counts for averaging
-inv_27   = 1.0 / 27.0;
-inv_45   = 1.0 / 45.0;
-inv_63   = 1.0 / 63.0;
-inv_99   = 1.0 / 99.0;
-inv_121  = 1.0 / 121.0;
-inv_187  = 1.0 / 187.0;
-inv_253  = 1.0 / 253.0;
-inv_495  = 1.0 / 495.0;
-inv_1045 = 1.0 / 1045.0;
-inv_2101 = 1.0 / 2101.0;
-
-//================= Bias Oscillator Tables ===============
-// Phase-locked bias oscillators using half-integer cycles.
-// Each mode has (2N+1)*pi total phase over an odd number of substeps,
-// ensuring opposite bias polarity between adjacent audio samples.
-// This introduces even harmonics for warmer, more musical saturation.
-//========================================================
-
-// K28: 1.5 cycles = 3pi, 27 substeps (ultra lofi)
-tablesize_27 = 27;
-dphi_27 = 3.0 * ma.PI / tablesize_27;
-bias_gen_27(n) = sin((float(ba.period(n)) + 0.5) * dphi_27);
-bias_lut_27(idx) = rdtable(tablesize_27, bias_gen_27(tablesize_27), int(idx));
-
-// K45: 2.5 cycles = 5pi, 45 substeps (lofi)
-tablesize_45 = 45;
-dphi_45 = 5.0 * ma.PI / tablesize_45;
-bias_gen_45(n) = sin((float(ba.period(n)) + 0.5) * dphi_45);
-bias_lut_45(idx) = rdtable(tablesize_45, bias_gen_45(tablesize_45), int(idx));
-
-// K63: 3.5 cycles = 7pi, 63 substeps (vintage)
-tablesize_63 = 63;
-dphi_63 = 7.0 * ma.PI / tablesize_63;
-bias_gen_63(n) = sin((float(ba.period(n)) + 0.5) * dphi_63);
-bias_lut_63(idx) = rdtable(tablesize_63, bias_gen_63(tablesize_63), int(idx));
-
-// K99: 4.5 cycles = 9pi, 99 substeps (warm)
-tablesize_99 = 99;
-dphi_99 = 9.0 * ma.PI / tablesize_99;
-bias_gen_99(n) = sin((float(ba.period(n)) + 0.5) * dphi_99);
-bias_lut_99(idx) = rdtable(tablesize_99, bias_gen_99(tablesize_99), int(idx));
-
-// K121: 5.5 cycles = 11pi, 121 substeps (standard)
-tablesize_121 = 121;
-dphi_121 = 11.0 * ma.PI / tablesize_121;
-bias_gen_121(n) = sin((float(ba.period(n)) + 0.5) * dphi_121);
-bias_lut_121(idx) = rdtable(tablesize_121, bias_gen_121(tablesize_121), int(idx));
-
-// K187: 8.5 cycles = 17pi, 187 substeps (high quality)
-tablesize_187 = 187;
-dphi_187 = 17.0 * ma.PI / tablesize_187;
-bias_gen_187(n) = sin((float(ba.period(n)) + 0.5) * dphi_187);
-bias_lut_187(idx) = rdtable(tablesize_187, bias_gen_187(tablesize_187), int(idx));
-
-// K253: 11.5 cycles = 23pi, 253 substeps (detailed)
-tablesize_253 = 253;
-dphi_253 = 23.0 * ma.PI / tablesize_253;
-bias_gen_253(n) = sin((float(ba.period(n)) + 0.5) * dphi_253);
-bias_lut_253(idx) = rdtable(tablesize_253, bias_gen_253(tablesize_253), int(idx));
-
-// K495: 22.5 cycles = 45pi, 495 substeps (ultra detailed)
-tablesize_495 = 495;
-dphi_495 = 45.0 * ma.PI / tablesize_495;
-bias_gen_495(n) = sin((float(ba.period(n)) + 0.5) * dphi_495);
-bias_lut_495(idx) = rdtable(tablesize_495, bias_gen_495(tablesize_495), int(idx));
-
-// K1045: 47.5 cycles = 95pi, 1045 substeps (extreme)
-tablesize_1045 = 1045;
-dphi_1045 = 95.0 * ma.PI / tablesize_1045;
-bias_gen_1045(n) = sin((float(ba.period(n)) + 0.5) * dphi_1045);
-bias_lut_1045(idx) = rdtable(tablesize_1045, bias_gen_1045(tablesize_1045), int(idx));
-
-// K2101: 95.5 cycles = 191pi, 2101 substeps (beyond physical)
-tablesize_2101 = 2101;
-dphi_2101 = 191.0 * ma.PI / tablesize_2101;
-bias_gen_2101(n) = sin((float(ba.period(n)) + 0.5) * dphi_2101);
-bias_lut_2101(idx) = rdtable(tablesize_2101, bias_gen_2101(tablesize_2101), int(idx));
-
-//================= JA Core Functions ===============
-// Core Jiles-Atherton hysteresis computation.
-// ja_substep0 computes one real JA iteration;
-// ja_loop_k* functions combine one real substep with LUT lookup.
-//===================================================
-
-// Real tanh (affordable with LUT optimization)
-fast_tanh(x) = ma.tanh(x);
-
-//-----------------ja_substep0--------------------
-// Single Jiles-Atherton substep computation.
-// Computes magnetization change for one bias substep using the full JA model.
+//-----------------ja_hysteresis_3xK29_01--------------------
+// 3×K29 cascaded hysteresis for bias preset 0.1 (gritty).
 //
 // #### Usage
 //
 // ```
-// ja_substep0(bias_val, M_prev, H_prev, H_audio) : _,_
+// _ : ja_hysteresis_3xK29_01 : _
 // ```
-//
-// Where:
-//
-// * bias_val: bias oscillator value for this substep
-// * M_prev: magnetization from previous substep
-// * H_prev: magnetic field from previous substep
-// * H_audio: audio-rate magnetic field (input signal)
-//
-// #### References
-//
-// * Jiles, D.C. and Atherton, D.L. (1986) "Theory of ferromagnetic hysteresis"
 //-------------------------------------------------
-ja_substep0(bias_val, M_prev, H_prev, H_audio) = M1, H1
+ja_hysteresis_3xK29_01(H) = (loop ~ _) : (!, _)
 with {
-  H1 = H_audio + bias_amp * bias_val;
-  dH = H1 - H_prev;
-  He = H1 + alpha_norm * M_prev;
-
-  x_man   = He * inv_a_norm;
-  Man_e   = fast_tanh(x_man);
-  Man_e2  = Man_e * Man_e;
-  dMan_dH = (1.0 - Man_e2) * inv_a_norm;
-
-  dir      = ba.if(dH >= 0.0, 1.0, -1.0);
-  pin      = dir * k_norm - alpha_norm * (Man_e - M_prev);
-  inv_pin  = 1.0 / (pin + sigma);
-
-  denom     = 1.0 - c_norm * alpha_norm * dMan_dH;
-  inv_denom = 1.0 / (denom + 1e-9);
-  dMdH      = (c_norm * dMan_dH + (Man_e - M_prev) * inv_pin) * inv_denom;
-  dM_step   = dMdH * dH;
-
-  M_unclamped = M_prev + dM_step;
-  M1          = max(-1.0, min(1.0, M_unclamped));
+  loop(recM) = M_end, Mavg with {
+    M1 = ja_lookup_m_end_k29_bias_01(recM, H);
+    s1 = ja_lookup_sum_m_rest_k29_bias_01(recM, H);
+    M2 = ja_lookup_m_end_k29_bias_01(M1, H);
+    s2 = ja_lookup_sum_m_rest_k29_bias_01(M1, H);
+    M_end = ja_lookup_m_end_k29_bias_01(M2, H);
+    s3 = ja_lookup_sum_m_rest_k29_bias_01(M2, H);
+    Mavg = (s1 + s2 + s3) * INV_N;
+  };
 };
 
-//================= LUT-Accelerated Loops ===============
-// Each ja_loop_k* function computes one real JA substep then
-// uses 2D LUT lookup for the remaining substeps.
-// Returns (M_end, H_end, Mavg) for the feedback loop.
-//=======================================================
-
-//-----------------ja_loop_k28--------------------
-// K28 mode: 1.5 bias cycles, 27 substeps (ultra lofi).
-// One real substep + LUT lookup for rich harmonic grit.
+//-----------------ja_hysteresis_3xK29_02--------------------
+// 3×K29 cascaded hysteresis for bias preset 0.2.
 //
 // #### Usage
 //
 // ```
-// ja_loop_k28(M_prev, H_prev, H_audio) : _,_,_
+// _ : ja_hysteresis_3xK29_02 : _
 // ```
-//
-// Where:
-//
-// * M_prev: magnetization from previous sample
-// * H_prev: magnetic field from previous sample
-// * H_audio: audio input signal
-//
-// Returns: M_end, H_end, Mavg (average magnetization = output)
 //-------------------------------------------------
-ja_loop_k28(M_prev, H_prev, H_audio) = M_end, H_end, Mavg
+ja_hysteresis_3xK29_02(H) = (loop ~ _) : (!, _)
 with {
-  M1_H1 = ja_substep0(bias_lut_27(0), M_prev, H_prev, H_audio);
-  M1 = ba.selector(0, 2, M1_H1);
-  M_end = ja_lookup_m_end_k28(M1, H_audio);
-  sumM_rest = ja_lookup_sum_m_rest_k28(M1, H_audio);
-  Mavg = (M1 + sumM_rest) * inv_27;
-  H_end = H_audio + bias_amp * bias_lut_27(26);
+  loop(recM) = M_end, Mavg with {
+    M1 = ja_lookup_m_end_k29_bias_02(recM, H);
+    s1 = ja_lookup_sum_m_rest_k29_bias_02(recM, H);
+    M2 = ja_lookup_m_end_k29_bias_02(M1, H);
+    s2 = ja_lookup_sum_m_rest_k29_bias_02(M1, H);
+    M_end = ja_lookup_m_end_k29_bias_02(M2, H);
+    s3 = ja_lookup_sum_m_rest_k29_bias_02(M2, H);
+    Mavg = (s1 + s2 + s3) * INV_N;
+  };
 };
 
-//-----------------ja_loop_k45--------------------
-// K45 mode: 2.5 bias cycles, 45 substeps (lofi).
+//-----------------ja_hysteresis_3xK29_03--------------------
+// 3×K29 cascaded hysteresis for bias preset 0.3.
 //
 // #### Usage
 //
 // ```
-// ja_loop_k45(M_prev, H_prev, H_audio) : _,_,_
+// _ : ja_hysteresis_3xK29_03 : _
 // ```
-//
-// Where:
-//
-// * M_prev: magnetization from previous sample
-// * H_prev: magnetic field from previous sample
-// * H_audio: audio input signal
-//
-// Returns: M_end, H_end, Mavg
 //-------------------------------------------------
-ja_loop_k45(M_prev, H_prev, H_audio) = M_end, H_end, Mavg
+ja_hysteresis_3xK29_03(H) = (loop ~ _) : (!, _)
 with {
-  M1_H1 = ja_substep0(bias_lut_45(0), M_prev, H_prev, H_audio);
-  M1 = ba.selector(0, 2, M1_H1);
-  M_end = ja_lookup_m_end_k45(M1, H_audio);
-  sumM_rest = ja_lookup_sum_m_rest_k45(M1, H_audio);
-  Mavg = (M1 + sumM_rest) * inv_45;
-  H_end = H_audio + bias_amp * bias_lut_45(44);
+  loop(recM) = M_end, Mavg with {
+    M1 = ja_lookup_m_end_k29_bias_03(recM, H);
+    s1 = ja_lookup_sum_m_rest_k29_bias_03(recM, H);
+    M2 = ja_lookup_m_end_k29_bias_03(M1, H);
+    s2 = ja_lookup_sum_m_rest_k29_bias_03(M1, H);
+    M_end = ja_lookup_m_end_k29_bias_03(M2, H);
+    s3 = ja_lookup_sum_m_rest_k29_bias_03(M2, H);
+    Mavg = (s1 + s2 + s3) * INV_N;
+  };
 };
 
-//-----------------ja_loop_k63--------------------
-// K63 mode: 3.5 bias cycles, 63 substeps (vintage).
+//-----------------ja_hysteresis_3xK29_04--------------------
+// 3×K29 cascaded hysteresis for bias preset 0.4.
 //
 // #### Usage
 //
 // ```
-// ja_loop_k63(M_prev, H_prev, H_audio) : _,_,_
+// _ : ja_hysteresis_3xK29_04 : _
 // ```
-//
-// Where:
-//
-// * M_prev: magnetization from previous sample
-// * H_prev: magnetic field from previous sample
-// * H_audio: audio input signal
-//
-// Returns: M_end, H_end, Mavg
 //-------------------------------------------------
-ja_loop_k63(M_prev, H_prev, H_audio) = M_end, H_end, Mavg
+ja_hysteresis_3xK29_04(H) = (loop ~ _) : (!, _)
 with {
-  M1_H1 = ja_substep0(bias_lut_63(0), M_prev, H_prev, H_audio);
-  M1 = ba.selector(0, 2, M1_H1);
-  M_end = ja_lookup_m_end_k63(M1, H_audio);
-  sumM_rest = ja_lookup_sum_m_rest_k63(M1, H_audio);
-  Mavg = (M1 + sumM_rest) * inv_63;
-  H_end = H_audio + bias_amp * bias_lut_63(62);
+  loop(recM) = M_end, Mavg with {
+    M1 = ja_lookup_m_end_k29_bias_04(recM, H);
+    s1 = ja_lookup_sum_m_rest_k29_bias_04(recM, H);
+    M2 = ja_lookup_m_end_k29_bias_04(M1, H);
+    s2 = ja_lookup_sum_m_rest_k29_bias_04(M1, H);
+    M_end = ja_lookup_m_end_k29_bias_04(M2, H);
+    s3 = ja_lookup_sum_m_rest_k29_bias_04(M2, H);
+    Mavg = (s1 + s2 + s3) * INV_N;
+  };
 };
 
-//-----------------ja_loop_k99--------------------
-// K99 mode: 4.5 bias cycles, 99 substeps (warm).
+//-----------------ja_hysteresis_3xK29_05--------------------
+// 3×K29 cascaded hysteresis for bias preset 0.5 (balanced).
 //
 // #### Usage
 //
 // ```
-// ja_loop_k99(M_prev, H_prev, H_audio) : _,_,_
+// _ : ja_hysteresis_3xK29_05 : _
 // ```
-//
-// Where:
-//
-// * M_prev: magnetization from previous sample
-// * H_prev: magnetic field from previous sample
-// * H_audio: audio input signal
-//
-// Returns: M_end, H_end, Mavg
 //-------------------------------------------------
-ja_loop_k99(M_prev, H_prev, H_audio) = M_end, H_end, Mavg
+ja_hysteresis_3xK29_05(H) = (loop ~ _) : (!, _)
 with {
-  M1_H1 = ja_substep0(bias_lut_99(0), M_prev, H_prev, H_audio);
-  M1 = ba.selector(0, 2, M1_H1);
-  M_end = ja_lookup_m_end_k99(M1, H_audio);
-  sumM_rest = ja_lookup_sum_m_rest_k99(M1, H_audio);
-  Mavg = (M1 + sumM_rest) * inv_99;
-  H_end = H_audio + bias_amp * bias_lut_99(98);
+  loop(recM) = M_end, Mavg with {
+    M1 = ja_lookup_m_end_k29_bias_05(recM, H);
+    s1 = ja_lookup_sum_m_rest_k29_bias_05(recM, H);
+    M2 = ja_lookup_m_end_k29_bias_05(M1, H);
+    s2 = ja_lookup_sum_m_rest_k29_bias_05(M1, H);
+    M_end = ja_lookup_m_end_k29_bias_05(M2, H);
+    s3 = ja_lookup_sum_m_rest_k29_bias_05(M2, H);
+    Mavg = (s1 + s2 + s3) * INV_N;
+  };
 };
 
-//-----------------ja_loop_k121--------------------
-// K121 mode: 5.5 bias cycles, 121 substeps (standard, default).
+//-----------------ja_hysteresis_3xK29_06--------------------
+// 3×K29 cascaded hysteresis for bias preset 0.6.
 //
 // #### Usage
 //
 // ```
-// ja_loop_k121(M_prev, H_prev, H_audio) : _,_,_
+// _ : ja_hysteresis_3xK29_06 : _
 // ```
-//
-// Where:
-//
-// * M_prev: magnetization from previous sample
-// * H_prev: magnetic field from previous sample
-// * H_audio: audio input signal
-//
-// Returns: M_end, H_end, Mavg
 //-------------------------------------------------
-ja_loop_k121(M_prev, H_prev, H_audio) = M_end, H_end, Mavg
+ja_hysteresis_3xK29_06(H) = (loop ~ _) : (!, _)
 with {
-  M1_H1 = ja_substep0(bias_lut_121(0), M_prev, H_prev, H_audio);
-  M1 = ba.selector(0, 2, M1_H1);
-  M_end = ja_lookup_m_end_k121(M1, H_audio);
-  sumM_rest = ja_lookup_sum_m_rest_k121(M1, H_audio);
-  Mavg = (M1 + sumM_rest) * inv_121;
-  H_end = H_audio + bias_amp * bias_lut_121(120);
+  loop(recM) = M_end, Mavg with {
+    M1 = ja_lookup_m_end_k29_bias_06(recM, H);
+    s1 = ja_lookup_sum_m_rest_k29_bias_06(recM, H);
+    M2 = ja_lookup_m_end_k29_bias_06(M1, H);
+    s2 = ja_lookup_sum_m_rest_k29_bias_06(M1, H);
+    M_end = ja_lookup_m_end_k29_bias_06(M2, H);
+    s3 = ja_lookup_sum_m_rest_k29_bias_06(M2, H);
+    Mavg = (s1 + s2 + s3) * INV_N;
+  };
 };
 
-//-----------------ja_loop_k187--------------------
-// K187 mode: 8.5 bias cycles, 187 substeps (high quality).
+//-----------------ja_hysteresis_3xK29_07--------------------
+// 3×K29 cascaded hysteresis for bias preset 0.7.
 //
 // #### Usage
 //
 // ```
-// ja_loop_k187(M_prev, H_prev, H_audio) : _,_,_
+// _ : ja_hysteresis_3xK29_07 : _
 // ```
-//
-// Where:
-//
-// * M_prev: magnetization from previous sample
-// * H_prev: magnetic field from previous sample
-// * H_audio: audio input signal
-//
-// Returns: M_end, H_end, Mavg
 //-------------------------------------------------
-ja_loop_k187(M_prev, H_prev, H_audio) = M_end, H_end, Mavg
+ja_hysteresis_3xK29_07(H) = (loop ~ _) : (!, _)
 with {
-  M1_H1 = ja_substep0(bias_lut_187(0), M_prev, H_prev, H_audio);
-  M1 = ba.selector(0, 2, M1_H1);
-  M_end = ja_lookup_m_end_k187(M1, H_audio);
-  sumM_rest = ja_lookup_sum_m_rest_k187(M1, H_audio);
-  Mavg = (M1 + sumM_rest) * inv_187;
-  H_end = H_audio + bias_amp * bias_lut_187(186);
+  loop(recM) = M_end, Mavg with {
+    M1 = ja_lookup_m_end_k29_bias_07(recM, H);
+    s1 = ja_lookup_sum_m_rest_k29_bias_07(recM, H);
+    M2 = ja_lookup_m_end_k29_bias_07(M1, H);
+    s2 = ja_lookup_sum_m_rest_k29_bias_07(M1, H);
+    M_end = ja_lookup_m_end_k29_bias_07(M2, H);
+    s3 = ja_lookup_sum_m_rest_k29_bias_07(M2, H);
+    Mavg = (s1 + s2 + s3) * INV_N;
+  };
 };
 
-//-----------------ja_loop_k253--------------------
-// K253 mode: 11.5 bias cycles, 253 substeps (detailed).
+//-----------------ja_hysteresis_3xK29_08--------------------
+// 3×K29 cascaded hysteresis for bias preset 0.8.
 //
 // #### Usage
 //
 // ```
-// ja_loop_k253(M_prev, H_prev, H_audio) : _,_,_
+// _ : ja_hysteresis_3xK29_08 : _
 // ```
-//
-// Where:
-//
-// * M_prev: magnetization from previous sample
-// * H_prev: magnetic field from previous sample
-// * H_audio: audio input signal
-//
-// Returns: M_end, H_end, Mavg
 //-------------------------------------------------
-ja_loop_k253(M_prev, H_prev, H_audio) = M_end, H_end, Mavg
+ja_hysteresis_3xK29_08(H) = (loop ~ _) : (!, _)
 with {
-  M1_H1 = ja_substep0(bias_lut_253(0), M_prev, H_prev, H_audio);
-  M1 = ba.selector(0, 2, M1_H1);
-  M_end = ja_lookup_m_end_k253(M1, H_audio);
-  sumM_rest = ja_lookup_sum_m_rest_k253(M1, H_audio);
-  Mavg = (M1 + sumM_rest) * inv_253;
-  H_end = H_audio + bias_amp * bias_lut_253(252);
+  loop(recM) = M_end, Mavg with {
+    M1 = ja_lookup_m_end_k29_bias_08(recM, H);
+    s1 = ja_lookup_sum_m_rest_k29_bias_08(recM, H);
+    M2 = ja_lookup_m_end_k29_bias_08(M1, H);
+    s2 = ja_lookup_sum_m_rest_k29_bias_08(M1, H);
+    M_end = ja_lookup_m_end_k29_bias_08(M2, H);
+    s3 = ja_lookup_sum_m_rest_k29_bias_08(M2, H);
+    Mavg = (s1 + s2 + s3) * INV_N;
+  };
 };
 
-//-----------------ja_loop_k495--------------------
-// K495 mode: 22.5 bias cycles, 495 substeps (ultra detailed).
+//-----------------ja_hysteresis_3xK29_09--------------------
+// 3×K29 cascaded hysteresis for bias preset 0.9 (clean).
 //
 // #### Usage
 //
 // ```
-// ja_loop_k495(M_prev, H_prev, H_audio) : _,_,_
+// _ : ja_hysteresis_3xK29_09 : _
 // ```
-//
-// Where:
-//
-// * M_prev: magnetization from previous sample
-// * H_prev: magnetic field from previous sample
-// * H_audio: audio input signal
-//
-// Returns: M_end, H_end, Mavg
 //-------------------------------------------------
-ja_loop_k495(M_prev, H_prev, H_audio) = M_end, H_end, Mavg
+ja_hysteresis_3xK29_09(H) = (loop ~ _) : (!, _)
 with {
-  M1_H1 = ja_substep0(bias_lut_495(0), M_prev, H_prev, H_audio);
-  M1 = ba.selector(0, 2, M1_H1);
-  M_end = ja_lookup_m_end_k495(M1, H_audio);
-  sumM_rest = ja_lookup_sum_m_rest_k495(M1, H_audio);
-  Mavg = (M1 + sumM_rest) * inv_495;
-  H_end = H_audio + bias_amp * bias_lut_495(494);
-};
-
-//-----------------ja_loop_k1045--------------------
-// K1045 mode: 47.5 bias cycles, 1045 substeps (extreme).
-//
-// #### Usage
-//
-// ```
-// ja_loop_k1045(M_prev, H_prev, H_audio) : _,_,_
-// ```
-//
-// Where:
-//
-// * M_prev: magnetization from previous sample
-// * H_prev: magnetic field from previous sample
-// * H_audio: audio input signal
-//
-// Returns: M_end, H_end, Mavg
-//-------------------------------------------------
-ja_loop_k1045(M_prev, H_prev, H_audio) = M_end, H_end, Mavg
-with {
-  M1_H1 = ja_substep0(bias_lut_1045(0), M_prev, H_prev, H_audio);
-  M1 = ba.selector(0, 2, M1_H1);
-  M_end = ja_lookup_m_end_k1045(M1, H_audio);
-  sumM_rest = ja_lookup_sum_m_rest_k1045(M1, H_audio);
-  Mavg = (M1 + sumM_rest) * inv_1045;
-  H_end = H_audio + bias_amp * bias_lut_1045(1044);
-};
-
-//-----------------ja_loop_k2101--------------------
-// K2101 mode: 95.5 bias cycles, 2101 substeps (beyond physical).
-//
-// #### Usage
-//
-// ```
-// ja_loop_k2101(M_prev, H_prev, H_audio) : _,_,_
-// ```
-//
-// Where:
-//
-// * M_prev: magnetization from previous sample
-// * H_prev: magnetic field from previous sample
-// * H_audio: audio input signal
-//
-// Returns: M_end, H_end, Mavg
-//-------------------------------------------------
-ja_loop_k2101(M_prev, H_prev, H_audio) = M_end, H_end, Mavg
-with {
-  M1_H1 = ja_substep0(bias_lut_2101(0), M_prev, H_prev, H_audio);
-  M1 = ba.selector(0, 2, M1_H1);
-  M_end = ja_lookup_m_end_k2101(M1, H_audio);
-  sumM_rest = ja_lookup_sum_m_rest_k2101(M1, H_audio);
-  Mavg = (M1 + sumM_rest) * inv_2101;
-  H_end = H_audio + bias_amp * bias_lut_2101(2100);
+  loop(recM) = M_end, Mavg with {
+    M1 = ja_lookup_m_end_k29_bias_09(recM, H);
+    s1 = ja_lookup_sum_m_rest_k29_bias_09(recM, H);
+    M2 = ja_lookup_m_end_k29_bias_09(M1, H);
+    s2 = ja_lookup_sum_m_rest_k29_bias_09(M1, H);
+    M_end = ja_lookup_m_end_k29_bias_09(M2, H);
+    s3 = ja_lookup_sum_m_rest_k29_bias_09(M2, H);
+    Mavg = (s1 + s2 + s3) * INV_N;
+  };
 };
 
 //================= Streaming Hysteresis ===============
-// Mode-selectable JA hysteresis with feedback loop.
+// Mode-selectable JA hysteresis with 9 bias presets.
 //======================================================
 
 //-----------------ja_hysteresis--------------------
-// Streaming Jiles-Atherton hysteresis with mode selection.
-// Wraps ja_loop_k* functions in a feedback loop, selecting mode 0-9.
+// Streaming Jiles-Atherton hysteresis with bias preset selection.
+// Uses 3×K29 cascaded LUT lookups (87 total substeps).
+// Discrete selection (no crossfade between presets).
 //
 // #### Usage
 //
 // ```
-// _ : ja_hysteresis(bias_mode) : _
+// _ : ja_hysteresis(bias_preset) : _
 // ```
 //
 // Where:
 //
-// * bias_mode: integer 0-9 selecting K28..K2101
+// * bias_preset: integer 0-8 selecting bias level (0=0.1, 4=0.5, 8=0.9)
 //
 // #### Example
 //
 // ```
-// process = _ : ja_hysteresis(4);  // K121 standard mode
+// process = _ : ja_hysteresis(4);  // bias 0.5 (balanced)
 // ```
 //
 // #### Test
 //
 // ```
-// jah = library("jahysteresis.lib");
+// jah = library("jahysteresis_lite.lib");
 // ja_hysteresis_test = os.osc(100) * 0.5 : jah.ja_hysteresis(4);
 // ```
 //
@@ -529,110 +316,89 @@ with {
 //
 // * Jiles, D.C. and Atherton, D.L. (1986) "Theory of ferromagnetic hysteresis"
 //-------------------------------------------------
-ja_hysteresis(bias_mode_val, H_in) =
-  ba.if(bias_mode_val < 0.5, loopK28(H_in),
-  ba.if(bias_mode_val < 1.5, loopK45(H_in),
-  ba.if(bias_mode_val < 2.5, loopK63(H_in),
-  ba.if(bias_mode_val < 3.5, loopK99(H_in),
-  ba.if(bias_mode_val < 4.5, loopK121(H_in),
-  ba.if(bias_mode_val < 5.5, loopK187(H_in),
-  ba.if(bias_mode_val < 6.5, loopK253(H_in),
-  ba.if(bias_mode_val < 7.5, loopK495(H_in),
-  ba.if(bias_mode_val < 8.5, loopK1045(H_in),
-                              loopK2101(H_in))))))))))
+ja_hysteresis(bias_preset, H_in) = ba.selectn(9, mode,
+    ja_hysteresis_3xK29_01(H_in),
+    ja_hysteresis_3xK29_02(H_in),
+    ja_hysteresis_3xK29_03(H_in),
+    ja_hysteresis_3xK29_04(H_in),
+    ja_hysteresis_3xK29_05(H_in),
+    ja_hysteresis_3xK29_06(H_in),
+    ja_hysteresis_3xK29_07(H_in),
+    ja_hysteresis_3xK29_08(H_in),
+    ja_hysteresis_3xK29_09(H_in))
 with {
-  loopK28(H) = (loop ~ (mem, mem)) : ba.selector(2, 3)
-  with { loop(recM, recH) = recM, recH, H : ja_loop_k28; };
-
-  loopK45(H) = (loop ~ (mem, mem)) : ba.selector(2, 3)
-  with { loop(recM, recH) = recM, recH, H : ja_loop_k45; };
-
-  loopK63(H) = (loop ~ (mem, mem)) : ba.selector(2, 3)
-  with { loop(recM, recH) = recM, recH, H : ja_loop_k63; };
-
-  loopK99(H) = (loop ~ (mem, mem)) : ba.selector(2, 3)
-  with { loop(recM, recH) = recM, recH, H : ja_loop_k99; };
-
-  loopK121(H) = (loop ~ (mem, mem)) : ba.selector(2, 3)
-  with { loop(recM, recH) = recM, recH, H : ja_loop_k121; };
-
-  loopK187(H) = (loop ~ (mem, mem)) : ba.selector(2, 3)
-  with { loop(recM, recH) = recM, recH, H : ja_loop_k187; };
-
-  loopK253(H) = (loop ~ (mem, mem)) : ba.selector(2, 3)
-  with { loop(recM, recH) = recM, recH, H : ja_loop_k253; };
-
-  loopK495(H) = (loop ~ (mem, mem)) : ba.selector(2, 3)
-  with { loop(recM, recH) = recM, recH, H : ja_loop_k495; };
-
-  loopK1045(H) = (loop ~ (mem, mem)) : ba.selector(2, 3)
-  with { loop(recM, recH) = recM, recH, H : ja_loop_k1045; };
-
-  loopK2101(H) = (loop ~ (mem, mem)) : ba.selector(2, 3)
-  with { loop(recM, recH) = recM, recH, H : ja_loop_k2101; };
+  mode = int(bias_preset + 0.5);
 };
 
 //================= FSM Channel Processing ===============
 // Full Spectrum Magnetization channel with gain staging, drive, and mix.
 //========================================================
 
-// DC blocker (10 Hz highpass)
-dc_blocker = fi.SVFTPT.HP2(10.0, 0.7071);
-
-//-----------------fsm_stage--------------------
-// Internal FSM processing stage without gain compensation.
-// Applies input gain, drive, Jiles-Atherton hysteresis, and DC blocking.
+//-----------------dc_blocker--------------------
+// DC blocker (5 Hz highpass, Q=0.7071 Butterworth).
 //
 // #### Usage
 //
 // ```
-// _ : fsm_stage(input_gain_lin, drive_gain, bias_mode) : _
+// _ : dc_blocker : _
 // ```
-//
-// Where:
-//
-// * input_gain_lin: linear input gain
-// * drive_gain: linear drive gain (pre-saturation)
-// * bias_mode: integer 0-9 selecting K28..K2101
 //-------------------------------------------------
-fsm_stage(input_gain_lin, drive_gain, bias_mode_val) =
-  _ * input_gain_lin
-  : *(drive_gain)
-  : ja_hysteresis(bias_mode_val)
-  : dc_blocker;
+dc_blocker = fi.SVFTPT.HP2(5.0, 0.7071);
 
-//-----------------fsm_channel--------------------
-// Full Spectrum Magnetization channel with phase-locked Jiles-Atherton hysteresis.
-// One explicit substep per sample plus LUT-accelerated remainder, with fixed
-// bias amplitude and mode-selectable bias oscillators (K28..K2101).
-// Drive is applied, hysteresis computed, DC blocked, drive compensated,
-// and the wet signal blended to dry.
+//-----------------lambda_sat--------------------
+// Wavelength saturation (spectral tilt) filter.
+// Simulates shorter wavelengths saturating harder on tape.
 //
 // #### Usage
 //
 // ```
-// _ : fsm_channel(input_gain_db, output_gain_db, drive_db, bias_mode, mix) : _
+// _ : lambda_sat(alpha) : _
 // ```
 //
 // Where:
 //
-// * input_gain_db: front-end gain in dB
-// * output_gain_db: post-stage gain in dB
-// * drive_db: pre-saturation drive in dB
-// * bias_mode: selects the LUT resolution/flavour (0-9: K28..K2101)
-// * mix: dry/wet blend from 0 (dry) to 1 (wet)
+// * alpha: tilt amount, -0.1 to +0.1 (0 = flat, + = HF boost before saturation)
 //
 // #### Example
 //
 // ```
-// process = par(i, 2, fsm_channel(0.0, 15.9, 0.0, 4, 1.0));
+// process = _ : lambda_sat(0.05) : _;
+// ```
+//-------------------------------------------------
+lambda_sat(alpha) = fi.spectral_tilt(3, 200, 15000, alpha);
+
+//-----------------fsm_channel--------------------
+// Full Spectrum Magnetization channel with phase-locked Jiles-Atherton hysteresis.
+// Uses 3×K29 cascaded LUT lookups for each of 9 bias presets.
+// Applies input gain, drive, wavelength saturation, JA hysteresis,
+// DC blocking, drive compensation, bias compensation, and output gain.
+//
+// #### Usage
+//
+// ```
+// _ : fsm_channel(input_db, output_db, drive_db, mix, lambda_tilt, bias_preset) : _
+// ```
+//
+// Where:
+//
+// * input_db: front-end gain in dB (-24 to +24)
+// * output_db: post-stage gain in dB (-24 to +24)
+// * drive_db: pre-saturation drive in dB (-18 to +29)
+// * mix: dry/wet blend from 0 (dry) to 1 (wet)
+// * lambda_tilt: wavelength saturation -0.1 to +0.1
+// * bias_preset: integer 0-8 selecting bias level (0=0.1, 4=0.5, 8=0.9)
+//
+// #### Example
+//
+// ```
+// process = par(i, 2, fsm_channel(0, 0, 6, 1, 0, 4));
 // ```
 //
 // #### Test
 //
 // ```
 // jah = library("jahysteresis_lite.lib");
-// fsm_channel_test = par(i, 2, jah.fsm_channel(0.0, 15.9, 0.0, 4, 1.0));
+// fsm_channel_test = os.osc(440) * 0.3 : jah.fsm_channel(0, 0, 6, 1, 0, 4);
 // ```
 //
 // #### References
@@ -640,22 +406,37 @@ fsm_stage(input_gain_lin, drive_gain, bias_mode_val) =
 // * Jiles, D.C. and Atherton, D.L. (1986) "Theory of ferromagnetic hysteresis"
 // * <https://github.com/Mando-369/FAUST_FSM_TAPE>
 //-------------------------------------------------
-fsm_channel(input_gain_db, output_gain_db, drive_db, bias_mode_val, mix_val) =
+fsm_channel(input_gain_db, output_gain_db, drive_db, mix_val,
+            lambda_tilt, bias_preset) =
   ef.dryWetMixer(mix_val, wet_gained)
 with {
-  drive_gain      = ba.db2linear(drive_db);
-  input_gain_lin  = ba.db2linear(input_gain_db);
-  output_gain_lin = ba.db2linear(output_gain_db);
-  drive_comp      = 1.0 / drive_gain;  // Compensate: +6dB drive -> -6dB output
+  input_gain  = ba.db2linear(input_gain_db) : si.smoo;
+  output_gain = ba.db2linear(output_gain_db) : si.smoo;
+  drive_gain  = ba.db2linear(drive_db) : si.smoo;
+  drive_comp  = (1.0 / drive_gain) * ba.db2linear(DRIVE_MAKEUP_DB);
+  mode = int(bias_preset + 0.5);
 
-  wet_gained = fsm_stage(input_gain_lin, drive_gain, bias_mode_val)
-               : *(drive_comp)
-               : *(output_gain_lin);
+  // Bias compensation per preset (measured)
+  bias_comp_db = ba.selectn(9, mode,
+    BIAS_COMP_01, BIAS_COMP_02, BIAS_COMP_03,
+    BIAS_COMP_04, BIAS_COMP_05, BIAS_COMP_06,
+    BIAS_COMP_07, BIAS_COMP_08, BIAS_COMP_09);
+  bias_comp = ba.db2linear(bias_comp_db);
+
+  fsm_stage(x) = x * input_gain
+    : *(drive_gain)
+    : lambda_sat(lambda_tilt)
+    : ja_hysteresis(bias_preset)
+    : dc_blocker
+    : *(drive_comp)
+    : *(bias_comp);
+
+  wet_gained = fsm_stage : *(output_gain);
 };
 
 //-----------------fsm_channel_ui--------------------
-// UI wrapper that binds sliders to the core `fsm_channel` parameters with
-// smoothing, exposing the same bias modes and mix control.
+// UI wrapper that binds sliders to the core `fsm_channel` parameters.
+// Exposes bias preset as a knob (0-8 = bias 0.1-0.9).
 //
 // #### Usage
 //
@@ -682,11 +463,18 @@ with {
 // * <https://github.com/Mando-369/FAUST_FSM_TAPE>
 //-------------------------------------------------
 fsm_channel_ui =
-  fsm_channel(input_gain_db, output_gain_db, drive_db_ui, bias_mode_ui, mix_ui)
+  fsm_channel(input_gain_db, output_gain_db, drive_db, mix, lambda_tilt, bias_preset)
 with {
-  input_gain_db  = hslider("Input Gain [dB]", 0.0, -24.0, 24.0, 0.1) : si.smoo;
-  output_gain_db = hslider("Output Gain [dB]", 15.9, -24.0, 48.0, 0.1) : si.smoo;
-  drive_db_ui    = hslider("Drive [dB]", 0.0, -18.0, 18.0, 0.1) : si.smoo;
-  bias_mode_ui   = nentry("Bias Mode [style:menu{'K28 Ultra LoFi':0;'K45 LoFi':1;'K63 Vintage':2;'K99 Warm':3;'K121 Standard':4;'K187 HQ':5;'K253 Detailed':6;'K495 Ultra':7;'K1045 Extreme':8;'K2101 Beyond':9}]", 4, 0, 9, 1);
-  mix_ui         = hslider("Mix [Dry->Wet]", 1.0, 0.0, 1.0, 0.01) : si.smoo;
+  bias_preset    = hgroup("JA Lite 3xK29", hgroup("[00] BIAS",
+                    vslider("[0]Bias [style:knob]", 4, 0, 8, 1)));
+  input_gain_db  = hgroup("JA Lite 3xK29", hgroup("[01] GAIN",
+                    vslider("[0]Input [dB]", 0.0, -24.0, 24.0, 0.1)));
+  output_gain_db = hgroup("JA Lite 3xK29", hgroup("[01] GAIN",
+                    vslider("[1]Output [dB]", 0.0, -24.0, 24.0, 0.1)));
+  drive_db       = hgroup("JA Lite 3xK29", hgroup("[01] GAIN",
+                    vslider("[2]Drive [dB]", 0.0, -18.0, 29.0, 0.1)));
+  mix            = hgroup("JA Lite 3xK29", hgroup("[01] GAIN",
+                    vslider("[3]Mix", 1.0, 0.0, 1.0, 0.01)));
+  lambda_tilt    = hgroup("JA Lite 3xK29", hgroup("[02] TAPE",
+                    vslider("[0]Lambda Tilt", 0.0, -0.1, 0.1, 0.001)));
 };

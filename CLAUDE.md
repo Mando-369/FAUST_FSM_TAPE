@@ -218,6 +218,72 @@ FAUST_FSM_TAPE/
     └── VARIABLE_SUBSTEP_LUT_PLAN.md # Variable substep LUT design
 ```
 
+## Lite Version (3×K29 Cascaded LUT)
+
+A simplified "lite" version using cascaded LUTs for extremely low CPU with selectable bias presets.
+
+**Location**: `faust/test/test_fixed_bias_cascaded_LUT/`
+
+### Architecture
+
+- **3×K29 Cascaded**: 3 sequential LUT lookups, each K29 (29 substeps), totaling 87 substeps
+- Course-corrects 3 times per sample for better transient response vs single 2×K58
+- Each bias preset has its own precomputed LUT
+
+### 9 Bias Presets
+
+| Mode | Bias | Compensation |
+|------|------|--------------|
+| 0 | 0.1 | -7.5 dB |
+| 1 | 0.2 | -5.4 dB |
+| 2 | 0.3 | -2.5 dB |
+| 3 | 0.4 | +0.4 dB |
+| 4 | 0.5 | +3.0 dB |
+| 5 | 0.6 | +5.2 dB |
+| 6 | 0.7 | +7.1 dB |
+| 7 | 0.8 | +8.9 dB |
+| 8 | 0.9 | +10.5 dB |
+
+### Critical: H Range Bug Fix
+
+LUTs must use H range **[-40, 40]** (not [-1, 1]) to cover full drive range:
+- Drive up to +29 dB pushes H values to ±28+
+- Narrow H range causes hard clipping before LUT lookup, destroying bias-dependent saturation character
+- With extended H range, harmonics now differ correctly between bias presets
+
+### LUT Generation
+
+```bash
+# Generate 9 K29 LUTs with correct bias levels
+cd scripts && ./gen_9_bias_luts_fixed.sh
+```
+
+Key parameters:
+- `--bias-level 0.1` to `0.9` (NOT 0.01-0.09)
+- `--h-range -40 40` (covers full +29dB drive)
+- `--h-size 513 --m-size 129` (grid resolution)
+- Function names must be unique per bias (e.g., `ja_lookup_m_end_k29_bias_01`)
+
+### Build (Official Faust)
+
+```bash
+# Use official faust with extended timeout
+/opt/homebrew/bin/faust -t 600 -a /opt/homebrew/share/faust/juce/juce-plugin.cpp \
+  -scn base_dsp -uim -i jahysteresis_lite_3xK29_9bias.dsp \
+  -o jahysteresis_lite_3xK29_9bias/FaustPluginProcessor.cpp
+```
+
+**Important**: Default faust timeout is 120s. Use `-t 600` for complex DSP with many LUT imports.
+
+## Final Libraries
+
+Production-ready libraries in `faust/dev/lib_final/`:
+
+| Library | Description | CPU |
+|---------|-------------|-----|
+| `jahysteresis.lib` | Full-physics K72, runtime params | ~2% |
+| `jahysteresis_lite.lib` | LUT-optimized, 10 modes (K28-K2101) | <1% |
+
 ## Plugin IDs (Don't Change!)
 
 FAUST plugin: `pluginCode="2ec6"`, `bundleIdentifier="com.grame.ja_streaming_bias_proto"`

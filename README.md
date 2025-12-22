@@ -103,10 +103,40 @@ Both plugins use identical physics, DC blocker (SVF TPT 10 Hz), and parameter ra
 
 Common features:
 - Bias Asymmetry: adds 2nd harmonic for warmth (`sin(phase) + asym * sin(2*phase)`)
-- **Wavelength Saturation (λ Tilt)**: frequency-dependent pre-saturation via `fi.spectral_tilt(3, 200, 15000, alpha)`. Simulates shorter wavelengths (higher frequencies) hitting tape harder — instant retro vibes. Range: -0.5 to +0.5 (-3 to +3 dB/octave), step 0.001.
+- **Wavelength Saturation (λ Tilt)**: frequency-dependent pre-saturation via `fi.spectral_tilt(3, 200, 15000, alpha)`. Simulates shorter wavelengths (higher frequencies) hitting tape harder — instant retro vibes. Range: -0.1 to +0.1, step 0.001.
 - Stabilization: diff_scale soft clamp, sigma=1e-3
 - Gain compensation: +15.6 dB makeup + piecewise bias compensation
 - UI: Grouped controls (Quality, Gain, Bias, Stab, Tape [λ Tilt], Physics)
+
+### Lite Version (3×K29 Cascaded LUT)
+
+Ultra-low CPU version with discrete bias presets.
+
+**Location**: `faust/test/test_fixed_bias_cascaded_LUT/`
+
+- **Architecture**: 3 sequential K29 LUT lookups (87 total substeps, 3 course-corrections/sample)
+- **9 bias presets**: 0.1 to 0.9 with measured gain compensation
+- **CPU**: <1%
+
+**Build** (requires extended timeout):
+```bash
+/opt/homebrew/bin/faust -t 600 -a /opt/homebrew/share/faust/juce/juce-plugin.cpp \
+  -scn base_dsp -uim -i jahysteresis_lite_3xK29_9bias.dsp \
+  -o jahysteresis_lite_3xK29_9bias/FaustPluginProcessor.cpp
+```
+
+**Important**: Default faust timeout is 120s. Use `-t 600` for complex DSP.
+
+**Critical**: LUTs must use H range [-40, 40] (not [-1, 1]) to cover full +29dB drive range.
+
+### Production Libraries
+
+Located in `faust/dev/lib_final/`:
+
+| Library | Description | CPU |
+|---------|-------------|-----|
+| `jahysteresis.lib` | Full-physics K72, runtime params | ~2% |
+| `jahysteresis_lite.lib` | LUT-optimized, 10 modes (K28-K2101) | <1% |
 
 ## License
 

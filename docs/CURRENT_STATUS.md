@@ -1,6 +1,6 @@
 # FAUST JA Hysteresis Library — Current Status
 
-**Last updated**: 2025-12-10
+**Last updated**: 2025-12-22
 **Collaborators**: Thomas Mandolini (OmegaDSP), GRAME (Stéphane Letz)
 
 ---
@@ -134,6 +134,56 @@ Prototype `dev/lib_latest_proto/jahysteresislib_proto.dsp` — production-ready 
 - Bias Level: 0.01 to 1.0 (min raised to prevent instability)
 - Bias Asym: 0.0 to 0.5
 - DC blocker: 5 Hz, Q=0.7071 (Butterworth)
+
+### Lite Version: 3×K29 Cascaded LUT (2025-12-22)
+
+Developed a "lite" version using cascaded LUTs with discrete bias presets for extremely low CPU.
+
+**Architecture**:
+- 3×K29 cascaded: 3 sequential LUT lookups (M1→M2→M_end), each K29 (29 substeps)
+- Totals 87 effective substeps with 3 course-corrections per sample
+- Better transient response than single 2×K58 (tested: 3×K29 noticeably cleaner/crispier)
+- Each bias preset (0.1-0.9) has its own precomputed LUT
+
+**Critical Bug Fix — H Range**:
+
+Original LUTs used H range [-1, 1], but drive up to +29 dB pushes H to ±28+. The lookup function hard-clipped H values before interpolation, destroying bias-dependent saturation character:
+- Symptom: Changing bias preset only changed gain, not harmonics
+- Root cause: Harmonic content came from hard clipping, not JA hysteresis
+- Fix: Extended H range to [-40, 40] in LUT generation
+
+**Bias Level Generation Bug**:
+
+Script used `0.${bias}` with bias=01,02,03... creating 0.01, 0.02, 0.03 (10x too low). Fixed to generate 0.1, 0.2, 0.3... 0.9.
+
+**Faust Compiler Timeout**:
+
+Default faust timeout is 120 seconds. Complex DSP with 9 LUT imports requires `-t 600` flag:
+```bash
+/opt/homebrew/bin/faust -t 600 -a /opt/homebrew/share/faust/juce/juce-plugin.cpp ...
+```
+
+**9 Bias Presets with Measured Compensation**:
+
+| Mode | Bias | Compensation |
+|------|------|--------------|
+| 0 | 0.1 | -7.5 dB |
+| 1 | 0.2 | -5.4 dB |
+| 2 | 0.3 | -2.5 dB |
+| 3 | 0.4 | +0.4 dB |
+| 4 | 0.5 | +3.0 dB |
+| 5 | 0.6 | +5.2 dB |
+| 6 | 0.7 | +7.1 dB |
+| 7 | 0.8 | +8.9 dB |
+| 8 | 0.9 | +10.5 dB |
+
+**Files**:
+- DSP: `faust/test/test_fixed_bias_cascaded_LUT/jahysteresis_lite_3xK29_9bias.dsp`
+- LUTs: `ja_lut_k29_bias_01.lib` through `ja_lut_k29_bias_09.lib`
+- Build: `build_lite_3xK29_9bias_official.sh`
+- Generation: `scripts/gen_9_bias_luts_fixed.sh`
+
+**Build time**: ~3 minutes (2m51s faust compile + xcodebuild)
 
 ### Hybrid LUT Experiment (2025-12-09) — NOT RECOMMENDED
 
@@ -550,10 +600,17 @@ FAUST_FSM_TAPE/
 │   ├── JAHysteresisLUT_K*.h          # C++ LUT headers (all 10 modes)
 │   ├── rebuild_faust.sh              # Build script preserving plugin IDs
 │   ├── dev/
+│   │   ├── lib_final/                     # Production-ready libraries
+│   │   │   ├── jahysteresis.lib           # Full-physics K72
+│   │   │   └── jahysteresis_lite.lib      # LUT-optimized 10 modes
 │   │   ├── lib_latest_proto/              # Latest full-physics prototype
-│   │   │   └── jahysteresislib_proto.dsp  # K60 Ultra (C++ match)
+│   │   │   └── jahysteresislib_proto.dsp  # K96 single mode
 │   │   └── dev_old/                       # Archived prototypes
 │   ├── test/
+│   │   ├── test_fixed_bias_cascaded_LUT/  # Lite version with 9 bias presets
+│   │   │   ├── jahysteresis_lite_3xK29_9bias.dsp
+│   │   │   ├── ja_lut_k29_bias_*.lib      # 9 bias-specific LUTs
+│   │   │   └── build_lite_3xK29_9bias_official.sh
 │   │   ├── test_var_subst_lut.dsp      # Variable substep LUT test
 │   │   ├── ja_lut_k*.lib               # LUTs for test builds
 │   │   └── test_old/                   # Archived tests
@@ -572,7 +629,8 @@ FAUST_FSM_TAPE/
 │       ├── JAHysteresisScheduler.h   # C++ reference implementation
 │       └── JAHysteresisScheduler.cpp
 ├── scripts/
-│   └── generate_ja_lut.py            # LUT generator (outputs .lib and .h)
+│   ├── generate_ja_lut.py            # LUT generator (outputs .lib and .h)
+│   └── gen_9_bias_luts_fixed.sh      # Generate 9 K29 LUTs with bias 0.1-0.9
 ├── tools/                            # Gitignored - clone separately
 │   └── faust-ondemand/               # Dev fork with ondemand primitive
 └── docs/
