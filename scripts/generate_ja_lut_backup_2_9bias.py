@@ -273,81 +273,6 @@ def compute_remainder_response(
     return M, sum_M
 
 
-def generate_3d_lut(
-    name: str,
-    phase_span: float,
-    total_substeps: int,
-    physics: PhysicsParams,
-    bias_scale: float = 11.0,
-    m_size: int = 65,
-    h_size: int = 129,
-    b_size: int = 17,
-    h_range: Tuple[float, float] = (-40.0, 40.0),
-    bias_range: Tuple[float, float] = (0.1, 0.9),
-    real_substeps: int = 0
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Generate a 3D LUT for (M_in, HAudio, bias_level) -> (M_end, sumM_rest).
-    Uses RK4 integration. Bias becomes a runtime parameter with trilinear interpolation.
-
-    Returns:
-        m_grid: M axis values
-        h_grid: H axis values
-        b_grid: bias axis values
-        lut_M_end: 3D array of M_end values
-        lut_sumM_rest: 3D array of sumM_rest values
-    """
-    bias_lut = generate_bias_lut(phase_span, total_substeps)
-    consts = get_derived_constants(physics)
-
-    # Create grids
-    m_grid = np.linspace(-1.0, 1.0, m_size)
-    h_grid = np.linspace(h_range[0], h_range[1], h_size)
-    b_grid = np.linspace(bias_range[0], bias_range[1], b_size)
-
-    # Initialize output arrays (float64 for full precision)
-    lut_M_end = np.zeros((m_size, h_size, b_size), dtype=np.float64)
-    lut_sumM_rest = np.zeros((m_size, h_size, b_size), dtype=np.float64)
-
-    total_points = m_size * h_size * b_size
-    count = 0
-
-    print(f"\nGenerating 3D LUT for {name}:")
-    print(f"  Phase span: {phase_span:.4f} rad ({phase_span/np.pi:.2f}π)")
-    print(f"  Total substeps: {total_substeps}")
-    print(f"  Real substeps (FAUST): {real_substeps}")
-    print(f"  LUT substeps: {real_substeps}..{total_substeps-1} ({total_substeps - real_substeps} steps)")
-    print(f"  Integration: RK4 (highest quality)")
-    print(f"  Grid: {m_size} x {h_size} x {b_size} = {total_points} points")
-    print(f"  Bias range: [{bias_range[0]}, {bias_range[1]}]")
-    print(f"  Bias scale: {bias_scale}")
-
-    start_time = time.time()
-
-    for i, M_in in enumerate(m_grid):
-        for j, H_audio in enumerate(h_grid):
-            for k, bias_level in enumerate(b_grid):
-                bias_amplitude = bias_level * bias_scale
-                M_end, sumM_rest = compute_remainder_response(
-                    M_in, H_audio, bias_lut, bias_amplitude, consts,
-                    start_substep=real_substeps
-                )
-                lut_M_end[i, j, k] = M_end
-                lut_sumM_rest[i, j, k] = sumM_rest
-
-                count += 1
-                if count % 10000 == 0:
-                    elapsed = time.time() - start_time
-                    rate = count / elapsed
-                    remaining = (total_points - count) / rate
-                    print(f"  Progress: {count}/{total_points} ({100*count/total_points:.1f}%) - ETA: {remaining:.1f}s")
-
-    elapsed = time.time() - start_time
-    print(f"  Done in {elapsed:.1f}s")
-
-    return m_grid, h_grid, b_grid, lut_M_end, lut_sumM_rest
-
-
 def generate_2d_lut(
     name: str,
     phase_span: float,
@@ -823,198 +748,6 @@ def export_faust_lib(
     print(f"  Exported FAUST library: {output_path}")
 
 
-def export_faust_3d_lib(
-    m_grid: np.ndarray,
-    h_grid: np.ndarray,
-    b_grid: np.ndarray,
-    lut_M_end: np.ndarray,
-    lut_sumM_rest: np.ndarray,
-    name: str,
-    total_substeps: int,
-    real_substeps: int,
-    phase_span: float,
-    output_path: Path
-):
-    """Export 3D LUT as FAUST library file with trilinear interpolation"""
-    m_size, h_size, b_size = lut_M_end.shape
-
-    # Flatten in (m, h, b) order: idx = (mi * H_SIZE + hi) * B_SIZE + bi
-    flat_M_end = lut_M_end.flatten()
-    flat_sumM_rest = lut_sumM_rest.flatten()
-
-    with open(output_path, 'w') as f:
-        f.write(f"// Auto-generated JA Hysteresis 3D LUT for {name}\n")
-        f.write(f"// Grid: {m_size} x {h_size} x {b_size} = {m_size * h_size * b_size} points\n")
-        f.write(f"// Total substeps: {total_substeps}\n")
-        f.write(f"// Real substeps (compute in audio loop): 0..{real_substeps-1}\n")
-        f.write(f"// LUT substeps: {real_substeps}..{total_substeps - 1}\n")
-        f.write(f"// Phase span: {phase_span:.6f} rad ({phase_span/np.pi:.2f}π)\n")
-        f.write(f"// Trilinear interpolation (8 corners)\n\n")
-
-        f.write("import(\"stdfaust.lib\");\n\n")
-
-        prefix = name.lower()
-        f.write(f"// Grid parameters for {name}\n")
-        f.write(f"ja_lut_{prefix}_m_size = {m_size};\n")
-        f.write(f"ja_lut_{prefix}_h_size = {h_size};\n")
-        f.write(f"ja_lut_{prefix}_b_size = {b_size};\n")
-        f.write(f"ja_lut_{prefix}_total_substeps = {total_substeps};\n")
-        f.write(f"ja_lut_{prefix}_real_substeps = {real_substeps};\n")
-        f.write(f"ja_lut_{prefix}_m_min = {m_grid[0]:.6f};\n")
-        f.write(f"ja_lut_{prefix}_m_max = {m_grid[-1]:.6f};\n")
-        f.write(f"ja_lut_{prefix}_h_min = {h_grid[0]:.6f};\n")
-        f.write(f"ja_lut_{prefix}_h_max = {h_grid[-1]:.6f};\n")
-        f.write(f"ja_lut_{prefix}_b_min = {b_grid[0]:.6f};\n")
-        f.write(f"ja_lut_{prefix}_b_max = {b_grid[-1]:.6f};\n")
-        f.write(f"ja_lut_{prefix}_phase_span = {phase_span:.6f};\n\n")
-
-        # Write waveform for M_end
-        f.write(f"// M_end LUT ({len(flat_M_end)} values)\n")
-        f.write(f"ja_lut_{prefix}_m_end = waveform{{\n")
-        for i, val in enumerate(flat_M_end):
-            f.write(f"    {val:.10e}")
-            if i < len(flat_M_end) - 1:
-                f.write(",")
-            if (i + 1) % 4 == 0:
-                f.write("\n")
-        f.write("};\n\n")
-
-        # Write waveform for sumM_rest
-        f.write(f"// sumM_rest LUT ({len(flat_sumM_rest)} values)\n")
-        f.write(f"ja_lut_{prefix}_sum_m_rest = waveform{{\n")
-        for i, val in enumerate(flat_sumM_rest):
-            f.write(f"    {val:.10e}")
-            if i < len(flat_sumM_rest) - 1:
-                f.write(",")
-            if (i + 1) % 4 == 0:
-                f.write("\n")
-        f.write("};\n\n")
-
-        # Helper functions
-        f.write("// 3D index computation: (mi * H_SIZE + hi) * B_SIZE + bi\n")
-        f.write(f"ja_lut_{prefix}_idx3(mi, hi, bi) = (mi * ja_lut_{prefix}_h_size + hi) * ja_lut_{prefix}_b_size + bi;\n\n")
-
-        f.write("// Normalize M to [0, 1] range\n")
-        f.write(f"ja_lut_{prefix}_m_norm(m) = (m - ja_lut_{prefix}_m_min) / (ja_lut_{prefix}_m_max - ja_lut_{prefix}_m_min);\n\n")
-
-        f.write("// Normalize H to [0, 1] range\n")
-        f.write(f"ja_lut_{prefix}_h_norm(h) = (h - ja_lut_{prefix}_h_min) / (ja_lut_{prefix}_h_max - ja_lut_{prefix}_h_min);\n\n")
-
-        f.write("// Normalize bias to [0, 1] range\n")
-        f.write(f"ja_lut_{prefix}_b_norm(b) = (b - ja_lut_{prefix}_b_min) / (ja_lut_{prefix}_b_max - ja_lut_{prefix}_b_min);\n\n")
-
-        # Trilinear interpolation lookup for M_end
-        f.write("// Trilinear interpolation lookup for M_end (8 corners)\n")
-        f.write(f"ja_lookup_m_end_{prefix}(m, h, b) = result\n")
-        f.write("with {\n")
-        f.write(f"    m_n = max(0.0, min(1.0, ja_lut_{prefix}_m_norm(m)));\n")
-        f.write(f"    h_n = max(0.0, min(1.0, ja_lut_{prefix}_h_norm(h)));\n")
-        f.write(f"    b_n = max(0.0, min(1.0, ja_lut_{prefix}_b_norm(b)));\n")
-        f.write("    \n")
-        f.write("    // Scale to grid, clamp to valid range [0, size-2]\n")
-        f.write(f"    m_scaled = max(0.0, min(m_n * (ja_lut_{prefix}_m_size - 1), ja_lut_{prefix}_m_size - 1.0001));\n")
-        f.write(f"    h_scaled = max(0.0, min(h_n * (ja_lut_{prefix}_h_size - 1), ja_lut_{prefix}_h_size - 1.0001));\n")
-        f.write(f"    b_scaled = max(0.0, min(b_n * (ja_lut_{prefix}_b_size - 1), ja_lut_{prefix}_b_size - 1.0001));\n")
-        f.write("    \n")
-        f.write("    // Base index and fractional part\n")
-        f.write("    mi = floor(m_scaled);\n")
-        f.write("    hi = floor(h_scaled);\n")
-        f.write("    bi = floor(b_scaled);\n")
-        f.write("    mt = m_scaled - mi;\n")
-        f.write("    ht = h_scaled - hi;\n")
-        f.write("    bt = b_scaled - bi;\n")
-        f.write("    \n")
-        f.write("    // Fetch 8 corners (2x2x2)\n")
-        f.write(f"    fetch(dm, dh, db) = ja_lut_{prefix}_m_end, ja_lut_{prefix}_idx3(mi + dm, hi + dh, bi + db) : rdtable;\n")
-        f.write("    p000 = fetch(0, 0, 0); p001 = fetch(0, 0, 1);\n")
-        f.write("    p010 = fetch(0, 1, 0); p011 = fetch(0, 1, 1);\n")
-        f.write("    p100 = fetch(1, 0, 0); p101 = fetch(1, 0, 1);\n")
-        f.write("    p110 = fetch(1, 1, 0); p111 = fetch(1, 1, 1);\n")
-        f.write("    \n")
-        f.write("    // Trilinear: interpolate along bias first, then H, then M\n")
-        f.write("    lerp(t, a, b) = a + t * (b - a);\n")
-        f.write("    p00 = lerp(bt, p000, p001);\n")
-        f.write("    p01 = lerp(bt, p010, p011);\n")
-        f.write("    p10 = lerp(bt, p100, p101);\n")
-        f.write("    p11 = lerp(bt, p110, p111);\n")
-        f.write("    p0 = lerp(ht, p00, p01);\n")
-        f.write("    p1 = lerp(ht, p10, p11);\n")
-        f.write("    result = lerp(mt, p0, p1);\n")
-        f.write("};\n\n")
-
-        # Trilinear interpolation lookup for sumM_rest
-        f.write("// Trilinear interpolation lookup for sumM_rest (8 corners)\n")
-        f.write(f"ja_lookup_sum_m_rest_{prefix}(m, h, b) = result\n")
-        f.write("with {\n")
-        f.write(f"    m_n = max(0.0, min(1.0, ja_lut_{prefix}_m_norm(m)));\n")
-        f.write(f"    h_n = max(0.0, min(1.0, ja_lut_{prefix}_h_norm(h)));\n")
-        f.write(f"    b_n = max(0.0, min(1.0, ja_lut_{prefix}_b_norm(b)));\n")
-        f.write("    \n")
-        f.write("    // Scale to grid, clamp to valid range [0, size-2]\n")
-        f.write(f"    m_scaled = max(0.0, min(m_n * (ja_lut_{prefix}_m_size - 1), ja_lut_{prefix}_m_size - 1.0001));\n")
-        f.write(f"    h_scaled = max(0.0, min(h_n * (ja_lut_{prefix}_h_size - 1), ja_lut_{prefix}_h_size - 1.0001));\n")
-        f.write(f"    b_scaled = max(0.0, min(b_n * (ja_lut_{prefix}_b_size - 1), ja_lut_{prefix}_b_size - 1.0001));\n")
-        f.write("    \n")
-        f.write("    // Base index and fractional part\n")
-        f.write("    mi = floor(m_scaled);\n")
-        f.write("    hi = floor(h_scaled);\n")
-        f.write("    bi = floor(b_scaled);\n")
-        f.write("    mt = m_scaled - mi;\n")
-        f.write("    ht = h_scaled - hi;\n")
-        f.write("    bt = b_scaled - bi;\n")
-        f.write("    \n")
-        f.write("    // Fetch 8 corners (2x2x2)\n")
-        f.write(f"    fetch(dm, dh, db) = ja_lut_{prefix}_sum_m_rest, ja_lut_{prefix}_idx3(mi + dm, hi + dh, bi + db) : rdtable;\n")
-        f.write("    p000 = fetch(0, 0, 0); p001 = fetch(0, 0, 1);\n")
-        f.write("    p010 = fetch(0, 1, 0); p011 = fetch(0, 1, 1);\n")
-        f.write("    p100 = fetch(1, 0, 0); p101 = fetch(1, 0, 1);\n")
-        f.write("    p110 = fetch(1, 1, 0); p111 = fetch(1, 1, 1);\n")
-        f.write("    \n")
-        f.write("    // Trilinear: interpolate along bias first, then H, then M\n")
-        f.write("    lerp(t, a, b) = a + t * (b - a);\n")
-        f.write("    p00 = lerp(bt, p000, p001);\n")
-        f.write("    p01 = lerp(bt, p010, p011);\n")
-        f.write("    p10 = lerp(bt, p100, p101);\n")
-        f.write("    p11 = lerp(bt, p110, p111);\n")
-        f.write("    p0 = lerp(ht, p00, p01);\n")
-        f.write("    p1 = lerp(ht, p10, p11);\n")
-        f.write("    result = lerp(mt, p0, p1);\n")
-        f.write("};\n")
-
-    print(f"  Exported 3D FAUST library: {output_path}")
-
-
-def generate_single_3d_lut(name: str, phase_span: float, total_substeps: int,
-                           physics: PhysicsParams, args, output_dir: Path):
-    """Generate a single 3D LUT with given parameters"""
-
-    m_grid, h_grid, b_grid, lut_M_end, lut_sumM_rest = generate_3d_lut(
-        name=name,
-        phase_span=phase_span,
-        total_substeps=total_substeps,
-        physics=physics,
-        bias_scale=args.bias_scale,
-        m_size=args.m_size,
-        h_size=args.h_size,
-        b_size=args.b_size,
-        h_range=tuple(args.h_range),
-        bias_range=tuple(args.bias_range),
-        real_substeps=args.real_substeps
-    )
-
-    # Export files
-    faust_path = output_dir / f"ja_lut_{name.lower()}_3d.lib"
-
-    export_faust_3d_lib(m_grid, h_grid, b_grid, lut_M_end, lut_sumM_rest, name,
-                        total_substeps, args.real_substeps, phase_span, faust_path)
-
-    print(f"  M_end range: [{lut_M_end.min():.6f}, {lut_M_end.max():.6f}]")
-    print(f"  sumM_rest range: [{lut_sumM_rest.min():.6f}, {lut_sumM_rest.max():.6f}]")
-    print(f"  Memory: {lut_M_end.nbytes * 2 / 1024:.1f} KB")
-
-    return m_grid, h_grid, b_grid, lut_M_end, lut_sumM_rest
-
-
 def generate_single_lut(name: str, phase_span: float, total_substeps: int,
                         physics: PhysicsParams, args, output_dir: Path):
     """Generate a single LUT with given parameters"""
@@ -1064,12 +797,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic 2D generation (1 real substep)
+  # Basic generation (1 real substep)
   python generate_ja_lut.py --mode K116
-
-  # 3D LUT with continuous bias (recommended for runtime bias control)
-  python generate_ja_lut.py --mode K29 --3d --b-size 17 --bias-range 0.1 0.9 \\
-      --h-range -40 40 --real-substeps 0 --output-dir ../faust/test
 
   # Generate bias presets (low/mid/high)
   python generate_ja_lut.py --mode K116 --bias-presets --output-dir ../faust/dev/lib_latest_proto
@@ -1108,14 +837,6 @@ Examples:
     parser.add_argument('--validate', action='store_true',
                         help='Run validation comparing LUT against full physics computation')
 
-    # 3D LUT mode arguments
-    parser.add_argument('--3d', dest='mode_3d', action='store_true',
-                        help='Generate 3D LUT with bias as third dimension (trilinear interpolation)')
-    parser.add_argument('--b-size', type=int, default=17,
-                        help='Bias grid size for 3D mode (default: 17)')
-    parser.add_argument('--bias-range', type=float, nargs=2, default=[0.1, 0.9],
-                        help='Bias range for 3D mode (default: 0.1 0.9)')
-
     args = parser.parse_args()
 
     mode = MODES[args.mode]
@@ -1137,16 +858,9 @@ Examples:
     print(f"Real substeps: {args.real_substeps} ({100*args.real_substeps/mode.total_substeps:.1f}% of total)")
     print(f"Integration: RK4 (highest quality, matches C++)")
     print(f"Physics: Ms={physics.Ms}, a={physics.a_density}, k={physics.k_pinning}, c={physics.c_reversibility}, α={physics.alpha_coupling}")
-    if args.mode_3d:
-        print(f"Grid: M[{args.m_size}] x H[{args.h_size}] x B[{args.b_size}]")
-        print(f"H range: [{args.h_range[0]}, {args.h_range[1]}]")
-        print(f"Bias range: [{args.bias_range[0]}, {args.bias_range[1]}]")
-        print(f"Bias scale: {args.bias_scale}")
-        print(f"Mode: 3D LUT with trilinear interpolation")
-    else:
-        print(f"Grid: M[{args.m_size}] x H[{args.h_size}]")
-        print(f"H range: [{args.h_range[0]}, {args.h_range[1]}]")
-        print(f"Bias: level={args.bias_level}, scale={args.bias_scale}")
+    print(f"Grid: M[{args.m_size}] x H[{args.h_size}]")
+    print(f"H range: [{args.h_range[0]}, {args.h_range[1]}]")
+    print(f"Bias: level={args.bias_level}, scale={args.bias_scale}")
     print(f"Validation: {'Yes' if args.validate else 'No'}")
 
     if args.bias_presets:
@@ -1155,17 +869,7 @@ Examples:
     # Create output directory
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 3D LUT mode
-    if args.mode_3d:
-        generate_single_3d_lut(
-            name=mode.name,
-            phase_span=mode.phase_span,
-            total_substeps=mode.total_substeps,
-            physics=physics,
-            args=args,
-            output_dir=args.output_dir
-        )
-    elif args.bias_presets:
+    if args.bias_presets:
         # Generate LUTs for each bias preset
         for preset_name, bias_level in BIAS_PRESETS.items():
             lut_name = f"{mode.name}_bias_{preset_name}"
