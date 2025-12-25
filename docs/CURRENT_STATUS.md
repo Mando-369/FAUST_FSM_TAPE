@@ -23,25 +23,25 @@ Discovered FAUST's built-in `ba.tabulateNd` function that computes N-dimensional
 
 | Metric | Value |
 |--------|-------|
-| CPU | **0.19%** (M4 Max, Reaper) |
+| CPU | **~0.2%** (M4 Max, Reaper) |
 | Grid | 33×65×9 (M, H, Bias) = 19,305 points |
-| Substeps | 4×K45 = 180 total (cascaded) |
+| Substeps | 4×K90 = 360 total (cascaded) |
 | Interpolation | Tricubic (`.cub`) |
-| Compile time | ~0.7s |
+| Compile time | ~2s |
 | Sound quality | Better than full physics model |
 
 ### Why It Works
 
 ```faust
-// FAUST evaluates ja_k45_m_end at compile time for all grid points
-lut_m_end(M, H, bias) = ba.tabulateNd(1, ja_k45_m_end,
+// FAUST evaluates ja_k90_m_end at compile time for all grid points
+lut_m_end(M, H, bias) = ba.tabulateNd(1, ja_k90_m_end,
   (33, 65, 9,           // grid sizes
    -1, -40, 0.1,        // min values
    1, 40, 0.9,          // max values
    M, H, bias)).cub;    // inputs + tricubic interp
 ```
 
-1. **Compile-time computation**: Full JA physics (K45 substeps) evaluated for each grid point during FAUST compilation
+1. **Compile-time computation**: Full JA physics (K90 substeps) evaluated for each grid point during FAUST compilation
 2. **Runtime = interpolation only**: At audio rate, just fetches 64 neighbors + weighted sum
 3. **4× cascading**: Course-corrects M state 4 times per sample for transient accuracy
 4. **Tricubic interpolation**: C2-continuous surface, no audible stepping between grid points
@@ -92,8 +92,11 @@ lut_m_end(M, H, bias) = ba.tabulateNd(1, ja_k45_m_end,
 
 | Implementation | CPU | Notes |
 |----------------|-----|-------|
-| **ba.tabulateNd 3D LUT** | **0.19%** | ⭐ Best: runtime bias, sounds better than physics |
-| FAUST full-physics K96 (96 substeps) | ~2% | Via `seq` unrolling, sounds perfect |
+| **ba.tabulateNd 3D LUT** | **~0.2%** | ⭐ Best: 4×K90=360 substeps, runtime bias, sounds better than physics |
+| FAUST full-physics K180 (4×K45, cascaded) | 3.4% | Matches tabulateNd quality, sounds like hardware |
+| FAUST full-physics K92 (4×K23, cascaded) | 1.9% | Great quality, recommended default |
+| FAUST full-physics K44 (4×K11, cascaded) | 1.0% | Eco mode, still excellent |
+| FAUST full-physics K96 (single loop) | ~2% | Via `seq` unrolling, sounds good |
 | C++ scheduler (original) | ~2% | Uses fractional substep accumulation |
 | FAUST + 2D LUT (1 real + 95 LUT) | <1% | Fixed bias parameters |
 | C++ + LUT | <1% | Ready for integration, see `cpp_reference/` |
@@ -106,33 +109,33 @@ lut_m_end(M, H, bias) = ba.tabulateNd(1, ja_k45_m_end,
 
 **Result**: Collapsed 66 JA physics evaluations to 1 + cheap bilinear interpolation.
 
-### Multi-Mode Prototype with Ondemand (2025-12-09, updated 2025-12-11)
+### Multi-Mode Prototype with Ondemand (2025-12-09, updated 2025-12-25)
 
-Prototype `dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes.dsp` — 3 quality modes using ondemand:
+Prototype `dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes.dsp` — 3 quality modes using ondemand with **4× cascaded architecture**:
 
-- **Modes**: K92 (HQ), K44 (Standard), K28 (Eco) — **prime substeps per cycle for stability**
+- **Modes**: K180 (HQ), K92 (Standard), K44 (Eco) — matches tabulateNd for best sound
+- **4× Cascaded**: M is course-corrected 4 times per sample for improved harmonic response
 - **CPU optimization**: Only the active mode computes (via `ondemand` primitive)
-- **Cycles**: All modes use 4 cycles × prime substeps (23/11/7 per cycle)
 - **Build**: `cd faust/dev/lib_latest_proto && ./build_OD_3_modes.sh`
 - **Plugin ID**: `e0a3`, Bundle: `com.grame.jahysteresislib_proto_OD_3_modes`
 
-**Prime substep discovery (2025-12-11)**: Using prime numbers for substeps per cycle (7, 11, 23) eliminates noise floor flickering observed with non-prime counts. The non-repeating sampling pattern reduces coherent aliasing artifacts.
+**4× Cascaded Architecture (2025-12-25)**: Discovered that cascading (4× smaller loops with M course-correction) dramatically improves harmonic response to match ba.tabulateNd quality. K180 (4×K45) sounds like analog hardware.
 
-| Mode | Cycles | Substeps/Cycle | Total | Phase Step |
-|------|--------|----------------|-------|------------|
-| K92 (HQ) | 4 | 23 (prime) | 92 | 15.7° |
-| K44 (Standard) | 4 | 11 (prime) | 44 | 32.7° |
-| K28 (Eco) | 4 | 7 (prime) | 28 | 51.4° |
+| Mode | Cascades | Substeps/Cascade | Total | CPU |
+|------|----------|------------------|-------|-----|
+| K180 (HQ) | 4 | 45 | 180 | 3.4% |
+| K92 (Standard) | 4 | 23 | 92 | 1.9% |
+| K44 (Eco) | 4 | 11 | 44 | 1.0% |
 
 **Compensation systems** (all mode-dependent):
-- **Mode comp**: K92=-0.3dB, K44=+0.8dB, K28=+2.7dB
-- **Diff scale**: K92=2.53, K44=3.93, K28=1.81 (tuned for balanced harmonics)
+- **Mode comp**: K180=-0.3dB, K92=-0.3dB, K44=+0.8dB
+- **Diff scale**: K180=2.0, K92=2.53, K44=3.93 (tuned for balanced harmonics)
 - **Bias comp**: Piecewise linear per mode, scaled by bias_scale/11.0
-- **Asym comp**: K92=-1.8dB, K44=-4.9dB, K28=-12.2dB at asym=0.5
+- **Asym comp**: K180=-1.8dB, K92=-1.8dB, K44=-4.9dB at asym=0.5
 
-**DC blocker**: 5 Hz, Q=0.7071 (Butterworth) — lowered from 10 Hz to reduce LF phase rotation.
+**DC blocker**: 7 Hz, Q=0.7071 (Butterworth).
 
-**Finding**: K8 (4×2=8 substeps) and K12 (4×3=12 substeps) modes failed at high bias levels — too few samples per cycle causes instability. K24 (4×6=24) showed noise floor flickering. Minimum stable with clean noise floor is K28 (4×7=28).
+**Finding**: 8× cascades tested but sounded worse than 4×. The 4× cascade count is optimal.
 
 ### Wavelength Saturation (λ Tilt) — (2025-12-10, updated 2025-12-11)
 
@@ -176,7 +179,7 @@ Prototype `dev/lib_latest_proto/jahysteresislib_proto.dsp` — production-ready 
 - Bias compensation: piecewise linear based on bias_amp (reference: bias_amp=4.4 = 0dB)
 
 **UI groups** (OD_3_modes prototype):
-- [00] QUALITY: Mode selection (K92 HQ / K44 Standard / K28 Eco)
+- [00] QUALITY: Mode selection (K180 HQ / K92 Standard / K44 Eco)
 - [01] GAIN: Input, Output, Drive, Mix
 - [02] BIAS: Level (0.01-1.0), Scale, Asym
 - [03] TAPE: λ Tilt (-0.1 to +0.1)
@@ -187,7 +190,7 @@ Prototype `dev/lib_latest_proto/jahysteresislib_proto.dsp` — production-ready 
 - Drive range: -18 to +29 dB
 - Bias Level: 0.01 to 1.0 (min raised to prevent instability)
 - Bias Asym: 0.0 to 0.5
-- DC blocker: 5 Hz, Q=0.7071 (Butterworth)
+- DC blocker: 7 Hz, Q=0.7071 (Butterworth)
 
 ### Lite Version: 3×K29 Cascaded LUT (2025-12-22)
 

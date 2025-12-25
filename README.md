@@ -13,9 +13,9 @@ FAUST implementation of the Jiles-Atherton (JA) model of ferromagnetic hysteresi
 
 | Metric | Value |
 |--------|-------|
-| CPU | **0.19%** (M4 Max) |
+| CPU | **~0.2%** (M4 Max) |
 | Grid | 33×65×9 (M, H, Bias) |
-| Substeps | 4×K45 = 180 total |
+| Substeps | 4×K90 = 360 total |
 | Interpolation | Tricubic |
 | Sound | Better than full physics |
 
@@ -106,38 +106,49 @@ Both plugins use identical physics, DC blocker (SVF TPT 10 Hz), and parameter ra
 **CPU load (M4 Max, Reaper, AU/VST3):**
 | Implementation | CPU |
 |----------------|-----|
-| **ba.tabulateNd 3D LUT** | **0.19%** |
-| FAUST full-physics K96 (96 substeps) | ~2% |
+| **ba.tabulateNd 3D LUT (4×K90)** | **~0.2%** |
+| FAUST full-physics K180 (4×K45, cascaded) | 3.4% |
+| FAUST full-physics K92 (4×K23, cascaded) | 1.9% |
+| FAUST full-physics K44 (4×K11, cascaded) | 1.0% |
 | C++ scheduler | ~2% |
 | FAUST + 2D LUT optimization | <1% |
 
-**Key difference:** C++ uses fractional substep accumulation (variable 35-37 steps), FAUST uses fixed unrolled chains (exactly 96). This causes subtle high-frequency response differences when bias is active.
+**Key finding:** 4× cascaded architecture (M course-correction 4 times per sample) dramatically improves harmonic response. K180 matches tabulateNd quality.
 
 **Note:** The LUT optimization trades some flexibility (fixed bias parameters) for massive CPU reduction. Hybrid 50/50 (48 real + 48 LUT) was tested but NOT recommended — Catmull-Rom interpolation overhead makes it only 0.3-0.5% faster than full physics. See `docs/CURRENT_STATUS.md` for details.
 
 ### Recommended: ba.tabulateNd 3D LUT
 
 **Location**: `faust/dev/lib_latest_proto/ja_tabulateNd.dsp`
-- 3D LUT (M × H × Bias) with 4×K45 cascaded lookups
+- 3D LUT (M × H × Bias) with 4×K90 cascaded lookups (360 substeps)
 - Runtime bias 0.1-0.9 with tricubic interpolation
-- **0.19% CPU** — sounds better than full physics
+- **~0.2% CPU** — sounds better than full physics
 - Build: `cd faust/dev/lib_latest_proto && ./ja_tabulateNd.sh`
 
 ### Full-Physics Alternatives
 
+**Multi-mode with ondemand (4× cascaded)**: `faust/dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes.dsp`
+
+| Mode | Cascades | Substeps | CPU | Character |
+|------|----------|----------|-----|-----------|
+| K180 HQ | 4×K45 | 180 | 3.4% | Sounds like analog hardware |
+| K92 Standard | 4×K23 | 92 | 1.9% | Great quality, default |
+| K44 Eco | 4×K11 | 44 | 1.0% | Efficient, still excellent |
+
+- Only active mode computes (via `ondemand` primitive)
+- **4× Cascaded Architecture**: M course-corrected 4× per sample for improved harmonic response
+- Build: `cd faust/dev/lib_latest_proto && ./build_OD_3_modes.sh`
+
 **Single mode**: `faust/dev/lib_latest_proto/jahysteresislib_proto.dsp`
 - K96 (96 substeps, 4 cycles × 24) — ~2% CPU
-
-**Multi-mode with ondemand**: `faust/dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes.dsp`
-- K96/K48/K24 quality modes — only active mode computes
-- Build: `cd faust/dev/lib_latest_proto && ./build_OD_3_modes.sh`
 
 Common features:
 - Bias Asymmetry: adds 2nd harmonic for warmth (`sin(phase) + asym * sin(2*phase)`)
 - **Wavelength Saturation (λ Tilt)**: frequency-dependent pre-saturation via `fi.spectral_tilt(3, 200, 15000, alpha)`. Simulates shorter wavelengths (higher frequencies) hitting tape harder — instant retro vibes. Range: -0.1 to +0.1, step 0.001.
 - Stabilization: diff_scale soft clamp, sigma=1e-3
 - Gain compensation: +15.6 dB makeup + piecewise bias compensation
-- UI: Grouped controls (Quality, Gain, Bias, Stab, Tape [λ Tilt], Physics)
+- DC blocker: 7 Hz, Q=0.7071 (Butterworth)
+- UI: Grouped controls (Quality, Gain, Bias, Tape [λ Tilt], Physics)
 
 ### Lite Version (3×K29 Cascaded LUT)
 

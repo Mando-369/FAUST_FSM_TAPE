@@ -19,11 +19,11 @@ The ultimate optimization: **3D LUT via FAUST's built-in `ba.tabulateNd`** with 
 ### Key Features
 
 - **3D Grid**: M × H × Bias (33×65×9 = 19,305 points)
-- **4×K45 Cascades**: 4 sequential lookups × 45 substeps = 180 total
+- **4×K90 Cascades**: 4 sequential lookups × 90 substeps = 360 total
 - **Tricubic interpolation** (`.cub`): C2-continuous, no audible stepping
 - **Runtime bias**: Continuous 0.1-0.9 (not discrete presets)
 - **Lambda tilt**: `fi.spectral_tilt(3, 200, 15000, lambda_tilt)` for tape character
-- **CPU: 0.19%** — 10x lower than full physics, sounds better
+- **CPU: ~0.2%** — 10x lower than full physics, sounds better
 
 ### Why It Works
 
@@ -122,10 +122,10 @@ cd scripts && python3 generate_ja_lut.py --mode K121 --variants --output-dir ../
 |--------|---------------------|----------------------|----------------|
 | Location | `faust/dev/lib_latest_proto/ja_tabulateNd.dsp` | `faust/dev/lib_latest_proto/jahysteresislib_proto.dsp` | `cpp_reference/JAHysteresisScheduler.*` |
 | Mode | 3D LUT (M×H×Bias) | K96 (96 substeps) | K32/K48/K60 × Eco/Normal/Ultra |
-| Substeps | 4×K45 = 180 (cascaded lookups) | Full 96 via `seq` | Full loop |
+| Substeps | 4×K90 = 360 (cascaded lookups) | Full 96 via `seq` | Full loop |
 | Bias | Runtime 0.1-0.9 | Fixed | Runtime |
 | tanh | Real `ma.tanh` (compile-time) | Real `ma.tanh` | `fast_tanh` (±3 clamp) |
-| CPU | **0.19%** | ~2% | ~2% |
+| CPU | **~0.2%** | ~2% | ~2% |
 | Sound | Better than physics | Excellent | Excellent |
 
 All implementations use identical physics: Ms=320, a=720, k=280, c=0.18, α=0.015
@@ -134,27 +134,34 @@ All implementations use identical physics: Ms=320, a=720, k=280, c=0.18, α=0.01
 
 `faust/dev/lib_latest_proto/jahysteresislib_proto.dsp` - K96 single mode:
 
-### Ondemand Multi-Mode Prototype
+### Ondemand Multi-Mode Prototype (4× Cascaded)
 
-`faust/dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes.dsp` - 3 quality modes with `ondemand`:
-- K92 (4×23=92 substeps), K44 (4×11=44), K28 (4×7=28) — **prime substeps per cycle**
-- Only active mode computes (CPU-efficient mode selection)
+`faust/dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes.dsp` - 3 quality modes with `ondemand` and **4× cascaded architecture**:
+
+| Mode | Cascades | Substeps/Cascade | Total | CPU |
+|------|----------|------------------|-------|-----|
+| K180 HQ | 4 | 45 | 180 | 3.4% |
+| K92 Standard | 4 | 23 | 92 | 1.9% |
+| K44 Eco | 4 | 11 | 44 | 1.0% |
+
+**K180 matches tabulateNd** — sounds like analog hardware.
+
+- Only active mode computes (CPU-efficient mode selection via `ondemand`)
 - Build script: `faust/dev/lib_latest_proto/build_OD_3_modes.sh`
 - Plugin ID: `e0a3`
 
-**Prime substep discovery**: Using prime numbers (7, 11, 23) eliminates noise floor flickering. Non-repeating sampling pattern reduces coherent aliasing.
+**4× Cascaded Architecture**: M is course-corrected 4 times per sample. This matches the tabulateNd approach and dramatically improves harmonic response compared to single-loop implementations.
 
 Features:
 - Integer cycles to avoid bias leakage (half-integer causes 12kHz tone)
 - Phase continuity: M, H, phase fed back across samples
-- **Stabilization**: diff_scale per mode (K92=2.53, K44=3.93, K28=0.5)
+- **Stabilization**: diff_scale per mode (K180=2.0, K92=2.53, K44=3.93)
 - **Bias Asymmetry**: `sin(phase) + bias_asym * sin(2*phase)` for 2nd harmonic (warmth)
 - **Wavelength Saturation (λ Tilt)**: `fi.spectral_tilt(3, 200, 15000, alpha)` — range -0.1 to +0.1
 - **Gain compensation**: +15.6 dB makeup + mode/bias/asym compensation
-- **DC blocker**: 5 Hz, Q=0.7071 (Butterworth)
+- **DC blocker**: 7 Hz, Q=0.7071 (Butterworth)
 - **UI**: Grouped controls (Quality, Gain, Bias, Tape, Physics)
 - Drive range: -18 to +29 dB, Bias Level: 0.01-1.0, Bias Asym: 0-0.5, λ Tilt: -0.1 to +0.1
-- **CPU**: ~2% — sounds perfect, full parameter control
 
 **Note**: Hybrid LUT (50% real + 50% LUT) was tested but NOT recommended — only saves 0.3-0.5% CPU due to Catmull-Rom interpolation overhead. See `docs/CURRENT_STATUS.md` for details.
 

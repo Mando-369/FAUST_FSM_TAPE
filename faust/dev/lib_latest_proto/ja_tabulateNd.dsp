@@ -5,12 +5,12 @@
 // - M axis: 33 points, [-1, 1]
 // - H axis: 65 points, [-40, 40]
 // - Bias axis: 9 points, [0.1, 0.9]
-// - 4x cascaded lookups (K45 = 45 substeps per lookup, 180 total)
+// - 4x cascaded lookups (K90 = 90 substeps per lookup, 360 total)
 
 import("stdfaust.lib");
 
 //==============================================================================
-// JA Physics Core - K45 substeps for one table entry
+// JA Physics Core - K90 substeps for one table entry
 //==============================================================================
 // This function is evaluated at compile time to build the table
 
@@ -30,10 +30,10 @@ inv_a_norm = 1.0 / max(a_norm, 1e-9);
 k_norm = k_pinning / Ms_safe;
 c_norm = c_rev;
 sigma = 1e-3;
-diff_scale = 2.53;
+diff_scale = 2.0;  // reduced for higher K
 
 two_pi = 2.0 * ma.PI;
-substeps = 45;
+substeps = 90;
 substep_phase = two_pi / substeps;
 inv_n = 1.0 / substeps;
 
@@ -64,8 +64,8 @@ with {
   M_new = max(-1.0, min(1.0, M_unclamped));
 };
 
-// K45 substep sequence - returns M_end
-ja_k45_seq(M_prev, H_prev, H_audio, M_sum, phase, bias_amp) =
+// K90 substep sequence - returns M_end
+ja_k90_seq(M_prev, H_prev, H_audio, M_sum, phase, bias_amp) =
   M_new, H_new, H_audio, M_sum_new, phase_new, bias_amp
 with {
   midpoint = ma.frac((phase + substep_phase * 0.5) / two_pi) * two_pi;
@@ -77,23 +77,23 @@ with {
   phase_new = ma.frac((phase + substep_phase) / two_pi) * two_pi;
 };
 
-// Run K45 substeps and return M_end
-ja_k45_m_end(M_prev, H_audio, bias_level) = M_end
+// Run K90 substeps and return M_end
+ja_k90_m_end(M_prev, H_audio, bias_level) = M_end
 with {
   bias_amp = bias_level * bias_scale;
   // seq returns: M, H, H_audio, M_sum, phase, bias_amp
-  result = M_prev, 0.0, H_audio, 0.0, 0.0, bias_amp : seq(i, 45, ja_k45_seq);
+  result = M_prev, 0.0, H_audio, 0.0, 0.0, bias_amp : seq(i, 90, ja_k90_seq);
   M_end = ba.selector(0, 6, result);
 };
 
-// Run K45 substeps and return sum(M_rest) for averaging
-ja_k45_sum_rest(M_prev, H_audio, bias_level) = sum_rest
+// Run K90 substeps and return sum(M_rest) for averaging
+ja_k90_sum_rest(M_prev, H_audio, bias_level) = sum_rest
 with {
   bias_amp = bias_level * bias_scale;
-  result = M_prev, 0.0, H_audio, 0.0, 0.0, bias_amp : seq(i, 45, ja_k45_seq);
+  result = M_prev, 0.0, H_audio, 0.0, 0.0, bias_amp : seq(i, 90, ja_k90_seq);
   M_sum = ba.selector(3, 6, result);
   M_end = ba.selector(0, 6, result);
-  sum_rest = M_sum - M_end;  // sum of M[1..44], excludes M_end
+  sum_rest = M_sum - M_end;  // sum of M[1..89], excludes M_end
 };
 
 //==============================================================================
@@ -114,21 +114,21 @@ B_MIN = 0.1;
 B_MAX = 0.9;
 
 // Tabulated M_end lookup with tricubic interpolation
-lut_m_end(M, H, bias) = ba.tabulateNd(1, ja_k45_m_end,
+lut_m_end(M, H, bias) = ba.tabulateNd(1, ja_k90_m_end,
   (M_SIZE, H_SIZE, B_SIZE,
    M_MIN, H_MIN, B_MIN,
    M_MAX, H_MAX, B_MAX,
    M, H, bias)).cub;
 
 // Tabulated sum_rest lookup with tricubic interpolation
-lut_sum_rest(M, H, bias) = ba.tabulateNd(1, ja_k45_sum_rest,
+lut_sum_rest(M, H, bias) = ba.tabulateNd(1, ja_k90_sum_rest,
   (M_SIZE, H_SIZE, B_SIZE,
    M_MIN, H_MIN, B_MIN,
    M_MAX, H_MAX, B_MAX,
    M, H, bias)).cub;
 
 //==============================================================================
-// 4x Cascaded Hysteresis (equivalent to 4×K45 = 180 substeps)
+// 4x Cascaded Hysteresis (equivalent to 4×K90 = 360 substeps)
 //==============================================================================
 ja_hysteresis(H_audio, bias) = (loop ~ _) : (!, _)
 with {
