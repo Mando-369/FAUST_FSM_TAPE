@@ -5,12 +5,12 @@
 // - M axis: 33 points, [-1, 1]
 // - H axis: 65 points, [-40, 40]
 // - Bias axis: 9 points, [0.1, 0.9]
-// - 3x cascaded lookups (K29 equivalent per lookup)
+// - 4x cascaded lookups (K45 = 45 substeps per lookup, 180 total)
 
 import("stdfaust.lib");
 
 //==============================================================================
-// JA Physics Core - K29 substeps for one table entry
+// JA Physics Core - K45 substeps for one table entry
 //==============================================================================
 // This function is evaluated at compile time to build the table
 
@@ -33,7 +33,7 @@ sigma = 1e-3;
 diff_scale = 2.53;
 
 two_pi = 2.0 * ma.PI;
-substeps = 29;
+substeps = 45;
 substep_phase = two_pi / substeps;
 inv_n = 1.0 / substeps;
 
@@ -64,8 +64,8 @@ with {
   M_new = max(-1.0, min(1.0, M_unclamped));
 };
 
-// K29 substep sequence - returns M_end
-ja_k29_seq(M_prev, H_prev, H_audio, M_sum, phase, bias_amp) =
+// K45 substep sequence - returns M_end
+ja_k45_seq(M_prev, H_prev, H_audio, M_sum, phase, bias_amp) =
   M_new, H_new, H_audio, M_sum_new, phase_new, bias_amp
 with {
   midpoint = ma.frac((phase + substep_phase * 0.5) / two_pi) * two_pi;
@@ -77,23 +77,23 @@ with {
   phase_new = ma.frac((phase + substep_phase) / two_pi) * two_pi;
 };
 
-// Run K29 substeps and return M_end
-ja_k29_m_end(M_prev, H_audio, bias_level) = M_end
+// Run K45 substeps and return M_end
+ja_k45_m_end(M_prev, H_audio, bias_level) = M_end
 with {
   bias_amp = bias_level * bias_scale;
   // seq returns: M, H, H_audio, M_sum, phase, bias_amp
-  result = M_prev, 0.0, H_audio, 0.0, 0.0, bias_amp : seq(i, 29, ja_k29_seq);
+  result = M_prev, 0.0, H_audio, 0.0, 0.0, bias_amp : seq(i, 45, ja_k45_seq);
   M_end = ba.selector(0, 6, result);
 };
 
-// Run K29 substeps and return sum(M_rest) for averaging
-ja_k29_sum_rest(M_prev, H_audio, bias_level) = sum_rest
+// Run K45 substeps and return sum(M_rest) for averaging
+ja_k45_sum_rest(M_prev, H_audio, bias_level) = sum_rest
 with {
   bias_amp = bias_level * bias_scale;
-  result = M_prev, 0.0, H_audio, 0.0, 0.0, bias_amp : seq(i, 29, ja_k29_seq);
+  result = M_prev, 0.0, H_audio, 0.0, 0.0, bias_amp : seq(i, 45, ja_k45_seq);
   M_sum = ba.selector(3, 6, result);
   M_end = ba.selector(0, 6, result);
-  sum_rest = M_sum - M_end;  // sum of M[1..28], excludes M_end
+  sum_rest = M_sum - M_end;  // sum of M[1..44], excludes M_end
 };
 
 //==============================================================================
@@ -114,45 +114,48 @@ B_MIN = 0.1;
 B_MAX = 0.9;
 
 // Tabulated M_end lookup with tricubic interpolation
-lut_m_end(M, H, bias) = ba.tabulateNd(1, ja_k29_m_end,
+lut_m_end(M, H, bias) = ba.tabulateNd(1, ja_k45_m_end,
   (M_SIZE, H_SIZE, B_SIZE,
    M_MIN, H_MIN, B_MIN,
    M_MAX, H_MAX, B_MAX,
    M, H, bias)).cub;
 
 // Tabulated sum_rest lookup with tricubic interpolation
-lut_sum_rest(M, H, bias) = ba.tabulateNd(1, ja_k29_sum_rest,
+lut_sum_rest(M, H, bias) = ba.tabulateNd(1, ja_k45_sum_rest,
   (M_SIZE, H_SIZE, B_SIZE,
    M_MIN, H_MIN, B_MIN,
    M_MAX, H_MAX, B_MAX,
    M, H, bias)).cub;
 
 //==============================================================================
-// 3x Cascaded Hysteresis (equivalent to 3×K29 = 87 substeps)
+// 4x Cascaded Hysteresis (equivalent to 4×K45 = 180 substeps)
 //==============================================================================
 ja_hysteresis(H_audio, bias) = (loop ~ _) : (!, _)
 with {
   loop(M_prev) = M_end, M_avg
   with {
-    // 3 cascaded lookups
+    // 4 cascaded lookups for better transient response
     M1 = lut_m_end(M_prev, H_audio, bias);
     s1 = lut_sum_rest(M_prev, H_audio, bias);
 
     M2 = lut_m_end(M1, H_audio, bias);
     s2 = lut_sum_rest(M1, H_audio, bias);
 
-    M_end = lut_m_end(M2, H_audio, bias);
+    M3 = lut_m_end(M2, H_audio, bias);
     s3 = lut_sum_rest(M2, H_audio, bias);
 
-    // Average across all substeps (matches original LUT formula)
-    M_avg = (s1 + s2 + s3) * inv_n;
+    M_end = lut_m_end(M3, H_audio, bias);
+    s4 = lut_sum_rest(M3, H_audio, bias);
+
+    // Average across all substeps
+    M_avg = (s1 + s2 + s3 + s4) * inv_n;
   };
 };
 
 //==============================================================================
 // Channel Processing
 //==============================================================================
-fsm_channel(input_gain_db, output_gain_db, drive_db, mix_val, bias_level) =
+fsm_channel(input_gain_db, output_gain_db, drive_db, mix_val, bias_level, lambda_tilt) =
   ef.dryWetMixer(mix_val, wet_gained)
 with {
   input_gain = ba.db2linear(input_gain_db) : si.smoo;
@@ -170,12 +173,17 @@ with {
   dc_blocker = fi.SVFTPT.HP2(7.0, 0.74);
 
   // Pre-JA attenuation to match H range
-  pre_ja_atten = ba.db2linear(-10.2);
+  pre_ja_atten = ba.db2linear(-12.8);
+
+  // Lambda (wavelength) saturation - spectral tilt
+  // Band: 200 Hz to 15000 Hz, Order 3
+  // Tilt: 0 = flat, +0.1 = HF boost, -0.1 = HF cut
+  lambda_sat = fi.spectral_tilt(3, 200, 15000, lambda_tilt);
 
   // Processing chain
   process_hyst(x) = ja_hysteresis(x, bias_level);
   wet_gained = _ * input_gain : *(drive_gain) : *(pre_ja_atten)
-    : process_hyst
+    : lambda_sat : process_hyst
     : dc_blocker : *(drive_comp) : *(bias_comp) : *(output_gain);
 };
 
@@ -183,7 +191,7 @@ with {
 // UI
 //==============================================================================
 fsm_channel_ui =
-  fsm_channel(input_gain_db, output_gain_db, drive_db, mix, bias_level)
+  fsm_channel(input_gain_db, output_gain_db, drive_db, mix, bias_level, lambda_tilt)
 with {
   bias_level = hgroup("JA TabulateNd", hgroup("[00] BIAS",
     vslider("[0]Level [style:knob]", 0.4, 0.1, 0.9, 0.01)));
@@ -195,6 +203,9 @@ with {
     vslider("[2]Drive [dB]", 0.0, -30.0, 30.0, 0.1)));
   mix = hgroup("JA TabulateNd", hgroup("[01] GAIN",
     vslider("[3]Mix", 1.0, 0.0, 1.0, 0.01)));
+  // Lambda tilt: 0 = flat, +0.1 = HF boost (bright), -0.1 = HF cut (warm)
+  lambda_tilt = hgroup("JA TabulateNd", hgroup("[02] TAPE",
+    vslider("[0]Lambda Tilt", 0.0, -0.1, 0.1, 0.001)));
 };
 
 process = par(i, 2, fsm_channel_ui);
