@@ -1,6 +1,6 @@
 # FAUST JA Hysteresis Library — Current Status
 
-**Last updated**: 2025-12-22
+**Last updated**: 2025-12-25
 **Collaborators**: Thomas Mandolini (OmegaDSP), GRAME (Stéphane Letz)
 
 ---
@@ -15,6 +15,63 @@ Create a reusable **FAUST library (`jahysteresis.lib`)** implementing the Jiles-
 
 ---
 
+## ba.tabulateNd Breakthrough (2025-12-25) — MAJOR SUCCESS
+
+Discovered FAUST's built-in `ba.tabulateNd` function that computes N-dimensional lookup tables at compile time. This eliminates the need for external LUT generation and enables **runtime bias interpolation**.
+
+### Key Results
+
+| Metric | Value |
+|--------|-------|
+| CPU | **0.19%** (M4 Max, Reaper) |
+| Grid | 33×65×9 (M, H, Bias) = 19,305 points |
+| Substeps | 4×K45 = 180 total (cascaded) |
+| Interpolation | Tricubic (`.cub`) |
+| Compile time | ~0.7s |
+| Sound quality | Better than full physics model |
+
+### Why It Works
+
+```faust
+// FAUST evaluates ja_k45_m_end at compile time for all grid points
+lut_m_end(M, H, bias) = ba.tabulateNd(1, ja_k45_m_end,
+  (33, 65, 9,           // grid sizes
+   -1, -40, 0.1,        // min values
+   1, 40, 0.9,          // max values
+   M, H, bias)).cub;    // inputs + tricubic interp
+```
+
+1. **Compile-time computation**: Full JA physics (K45 substeps) evaluated for each grid point during FAUST compilation
+2. **Runtime = interpolation only**: At audio rate, just fetches 64 neighbors + weighted sum
+3. **4× cascading**: Course-corrects M state 4 times per sample for transient accuracy
+4. **Tricubic interpolation**: C2-continuous surface, no audible stepping between grid points
+5. **Continuous bias**: Smooth 0.1-0.9 range (not discrete presets)
+
+### Why Previous Approaches Failed
+
+- **Precomputed `.lib` waveforms**: FAUST choked parsing 400k+ lines (10 min timeout)
+- **Bias-averaging**: Averaged out the bias character, sounded "dull and gated"
+- **9 discrete bias presets**: Zipper noise when switching, no interpolation
+
+### Files
+
+- **DSP**: `faust/dev/lib_latest_proto/ja_tabulateNd.dsp`
+- **Build**: `faust/dev/lib_latest_proto/ja_tabulateNd.sh`
+- **Plugin**: `~/Library/Audio/Plug-Ins/Components/ja_tabulateNd.component`
+
+### Parameters
+
+| Parameter | Range | Default | Notes |
+|-----------|-------|---------|-------|
+| Bias Level | 0.1-0.9 | 0.4 | Continuous, interpolated |
+| Input | ±24 dB | 0 | |
+| Output | ±24 dB | 0 | |
+| Drive | ±30 dB | 0 | Pre-JA attenuation: -12.8 dB |
+| Mix | 0-1 | 1 | |
+| Lambda Tilt | ±0.1 | 0 | Spectral tilt for tape character |
+
+---
+
 ## Current State
 
 ### What Works
@@ -23,12 +80,10 @@ Create a reusable **FAUST library (`jahysteresis.lib`)** implementing the Jiles-
 |-----------|--------|-------|
 | JA physics model | Complete | Ms=320, a=720, k=280, c=0.18, α=0.015 |
 | Phase-locked bias oscillator | Complete | Fixed cycles/sample, sample-rate invariant |
-| 2D LUT optimization | Complete | 1 real substep + LUT lookup |
-| 10 bias modes (K28-K2101) | Complete | LoFi to beyond-physical range (integer cycles) |
-| FAUST prototype (ba.if) | Complete | `dev/ja_streaming_bias_proto.dsp` |
-| FAUST prototype (ondemand) | Complete | `dev/ja_streaming_bias_proto_OD_72.dsp` |
-| FAUST full-physics proto | Complete | `dev/lib_latest_proto/jahysteresislib_proto.dsp` (K96, 96 substeps, bias asymmetry) |
-| FAUST multi-mode (ondemand) | Complete | `dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes.dsp` (K96/K48/K24, only active computes) |
+| **ba.tabulateNd 3D LUT** | **Complete** | **0.19% CPU, runtime bias, sounds better than physics** |
+| 2D LUT optimization | Complete | 1 real substep + LUT lookup (fixed bias) |
+| FAUST full-physics proto | Complete | `dev/lib_latest_proto/jahysteresislib_proto.dsp` (K96, ~2% CPU) |
+| FAUST multi-mode (ondemand) | Complete | `dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes.dsp` |
 | FAUST library | In Progress | `jahysteresis.lib` (contribution-ready) |
 | C++ reference (original) | Complete | `JAHysteresisScheduler` with ~2% CPU |
 | C++ reference (LUT) | Complete | `JAHysteresisSchedulerLUT` with <1% CPU expected |
@@ -37,11 +92,10 @@ Create a reusable **FAUST library (`jahysteresis.lib`)** implementing the Jiles-
 
 | Implementation | CPU | Notes |
 |----------------|-----|-------|
+| **ba.tabulateNd 3D LUT** | **0.19%** | ⭐ Best: runtime bias, sounds better than physics |
 | FAUST full-physics K96 (96 substeps) | ~2% | Via `seq` unrolling, sounds perfect |
-| FAUST full-physics K72 (72 substeps) | ~2% | Previous version |
 | C++ scheduler (original) | ~2% | Uses fractional substep accumulation |
-| FAUST hybrid 50/50 (48 real + 48 LUT) | ~1.5-1.7% | Not worth it (see findings below) |
-| FAUST + LUT (1 real + 95 LUT) | <1% | Fixed bias parameters |
+| FAUST + 2D LUT (1 real + 95 LUT) | <1% | Fixed bias parameters |
 | C++ + LUT | <1% | Ready for integration, see `cpp_reference/` |
 
 ### Achieved Breakthrough

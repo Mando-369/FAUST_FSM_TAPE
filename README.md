@@ -7,6 +7,29 @@ FAUST implementation of the Jiles-Atherton (JA) model of ferromagnetic hysteresi
 
 > **Project Status**: See [`docs/CURRENT_STATUS.md`](docs/CURRENT_STATUS.md) for current state, open problems, and research directions.
 
+## ba.tabulateNd Breakthrough (2025-12-25)
+
+**The ultimate optimization**: 3D LUT via FAUST's built-in `ba.tabulateNd` with runtime bias interpolation.
+
+| Metric | Value |
+|--------|-------|
+| CPU | **0.19%** (M4 Max) |
+| Grid | 33×65×9 (M, H, Bias) |
+| Substeps | 4×K45 = 180 total |
+| Interpolation | Tricubic |
+| Sound | Better than full physics |
+
+```bash
+# Build the recommended version
+cd faust/dev/lib_latest_proto && ./ja_tabulateNd.sh
+```
+
+Key features:
+- **Runtime bias**: Continuous 0.1-0.9 (not discrete presets)
+- **Lambda tilt**: Spectral shaping for tape character
+- **Compile-time physics**: Full JA computed during FAUST compilation
+- **Runtime = interpolation**: Just 64-point tricubic lookup at audio rate
+
 ## What We're Looking For (GRAME)
 
 1. **Variable-count iteration pattern** - The C++ reference uses fractional substep accumulation (step count varies 35-37 per sample for better phase continuity). FAUST's fixed unrolled chains (exactly 36/54/66) cause subtle frequency response differences. Is there an idiomatic FAUST pattern for variable iteration counts based on runtime accumulator state?
@@ -83,19 +106,27 @@ Both plugins use identical physics, DC blocker (SVF TPT 10 Hz), and parameter ra
 **CPU load (M4 Max, Reaper, AU/VST3):**
 | Implementation | CPU |
 |----------------|-----|
+| **ba.tabulateNd 3D LUT** | **0.19%** |
 | FAUST full-physics K96 (96 substeps) | ~2% |
 | C++ scheduler | ~2% |
-| FAUST + LUT optimization | <1% |
-| FAUST hybrid 50/50 | ~1.5-1.7% |
+| FAUST + 2D LUT optimization | <1% |
 
 **Key difference:** C++ uses fractional substep accumulation (variable 35-37 steps), FAUST uses fixed unrolled chains (exactly 96). This causes subtle high-frequency response differences when bias is active.
 
 **Note:** The LUT optimization trades some flexibility (fixed bias parameters) for massive CPU reduction. Hybrid 50/50 (48 real + 48 LUT) was tested but NOT recommended — Catmull-Rom interpolation overhead makes it only 0.3-0.5% faster than full physics. See `docs/CURRENT_STATUS.md` for details.
 
-### Full-Physics Prototypes (Recommended)
+### Recommended: ba.tabulateNd 3D LUT
+
+**Location**: `faust/dev/lib_latest_proto/ja_tabulateNd.dsp`
+- 3D LUT (M × H × Bias) with 4×K45 cascaded lookups
+- Runtime bias 0.1-0.9 with tricubic interpolation
+- **0.19% CPU** — sounds better than full physics
+- Build: `cd faust/dev/lib_latest_proto && ./ja_tabulateNd.sh`
+
+### Full-Physics Alternatives
 
 **Single mode**: `faust/dev/lib_latest_proto/jahysteresislib_proto.dsp`
-- K96 (96 substeps, 4 cycles × 24) — sounds perfect
+- K96 (96 substeps, 4 cycles × 24) — ~2% CPU
 
 **Multi-mode with ondemand**: `faust/dev/lib_latest_proto/jahysteresislib_proto_OD_3_modes.dsp`
 - K96/K48/K24 quality modes — only active mode computes

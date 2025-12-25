@@ -10,13 +10,65 @@ Goal: optimize algorithm, create `jahysteresis.lib` library for GRAME contributi
 
 **Current status, open problems, and research directions**: See [`docs/CURRENT_STATUS.md`](docs/CURRENT_STATUS.md)
 
-## LUT Optimization (Major Breakthrough!)
+## ba.tabulateNd Breakthrough (2025-12-25) — RECOMMENDED
 
-The FAUST implementation now uses a **2D LUT optimization** that reduces CPU from ~24% to <1%:
+The ultimate optimization: **3D LUT via FAUST's built-in `ba.tabulateNd`** with runtime bias interpolation.
+
+**Location**: `faust/dev/lib_latest_proto/ja_tabulateNd.dsp`
+
+### Key Features
+
+- **3D Grid**: M × H × Bias (33×65×9 = 19,305 points)
+- **4×K45 Cascades**: 4 sequential lookups × 45 substeps = 180 total
+- **Tricubic interpolation** (`.cub`): C2-continuous, no audible stepping
+- **Runtime bias**: Continuous 0.1-0.9 (not discrete presets)
+- **Lambda tilt**: `fi.spectral_tilt(3, 200, 15000, lambda_tilt)` for tape character
+- **CPU: 0.19%** — 10x lower than full physics, sounds better
+
+### Why It Works
+
+```faust
+// FAUST computes this at compile time for all grid points
+lut_m_end(M, H, bias) = ba.tabulateNd(1, ja_k45_m_end,
+  (M_SIZE, H_SIZE, B_SIZE,
+   M_MIN, H_MIN, B_MIN,
+   M_MAX, H_MAX, B_MAX,
+   M, H, bias)).cub;
+```
+
+- **Compile-time**: Full JA physics (K45) evaluated for each grid point during FAUST compilation
+- **Runtime**: Only tricubic interpolation (64 neighbors + weighted sum)
+- **No external files**: Tables embedded in compiled code
+
+### Build
+
+```bash
+cd faust/dev/lib_latest_proto && ./ja_tabulateNd.sh
+```
+
+Compiles in ~0.7s, builds AU in ~2s.
+
+### Parameters
+
+| Parameter | Range | Default |
+|-----------|-------|---------|
+| Bias Level | 0.1-0.9 | 0.4 |
+| Input/Output | ±24 dB | 0 |
+| Drive | ±30 dB | 0 |
+| Mix | 0-1 | 1 |
+| Lambda Tilt | ±0.1 | 0 |
+
+---
+
+## Previous LUT Optimization (2D, Fixed Bias)
+
+The earlier approach using **2D LUT optimization** that reduces CPU from ~24% to <1%:
 
 - **Key insight**: Only substep 0 has cross-sample dependency; substeps 1..N-1 are deterministic given (M1, H_audio)
 - **Solution**: 1 real JA substep + 2D LUT lookup for the remainder
 - **Result**: Can run K2101 (2101 substeps) at same cost as original K63 (63 substeps)
+
+**Limitation**: Fixed bias parameters (no runtime control)
 
 ### Available Modes (10-step control)
 
@@ -66,13 +118,15 @@ cd scripts && python3 generate_ja_lut.py --mode K121 --variants --output-dir ../
 
 ## Implementations
 
-| Aspect | FAUST (LUT-optimized) | FAUST (full-physics) | C++ (original) |
-|--------|----------------------|----------------------|----------------|
-| Location | `faust/jahysteresis.lib` | `faust/dev/lib_latest_proto/jahysteresislib_proto.dsp` | `cpp_reference/JAHysteresisScheduler.*` |
-| Mode | 10 modes (K28-K2101) | K96 (96 substeps) | K32/K48/K60 × Eco/Normal/Ultra |
-| Substeps | 1 real + LUT lookup | Full 96 via `seq` | Full loop |
-| tanh | Real `ma.tanh` | Real `ma.tanh` | `fast_tanh` (±3 clamp) |
-| CPU | <1% | ~2% | ~2% |
+| Aspect | ba.tabulateNd (NEW) | FAUST (full-physics) | C++ (original) |
+|--------|---------------------|----------------------|----------------|
+| Location | `faust/dev/lib_latest_proto/ja_tabulateNd.dsp` | `faust/dev/lib_latest_proto/jahysteresislib_proto.dsp` | `cpp_reference/JAHysteresisScheduler.*` |
+| Mode | 3D LUT (M×H×Bias) | K96 (96 substeps) | K32/K48/K60 × Eco/Normal/Ultra |
+| Substeps | 4×K45 = 180 (cascaded lookups) | Full 96 via `seq` | Full loop |
+| Bias | Runtime 0.1-0.9 | Fixed | Runtime |
+| tanh | Real `ma.tanh` (compile-time) | Real `ma.tanh` | `fast_tanh` (±3 clamp) |
+| CPU | **0.19%** | ~2% | ~2% |
+| Sound | Better than physics | Excellent | Excellent |
 
 All implementations use identical physics: Ms=320, a=720, k=280, c=0.18, α=0.015
 
@@ -183,14 +237,15 @@ FAUST_FSM_TAPE/
 │   ├── JAHysteresisLUT_K*.h        # C++ LUT headers (all 10 modes)
 │   ├── rebuild_faust.sh            # Rebuild without changing plugin IDs
 │   ├── dev/
-│   │   ├── lib_latest_proto/              # Latest full-physics prototypes
-│   │   │   ├── jahysteresislib_proto.dsp  # K96 single mode (production-ready)
+│   │   ├── lib_latest_proto/              # Latest prototypes
+│   │   │   ├── ja_tabulateNd.dsp          # ⭐ 3D LUT via ba.tabulateNd (0.19% CPU)
+│   │   │   ├── ja_tabulateNd.sh           # Build script for tabulateNd
+│   │   │   ├── jahysteresislib_proto.dsp  # K96 single mode (full-physics)
 │   │   │   ├── jahysteresislib_proto_OD_3_modes.dsp  # K96/K48/K24 with ondemand
 │   │   │   └── build_OD_3_modes.sh        # Build script for OD_3 variant
 │   │   └── dev_old/                       # Archived prototypes
 │   ├── test/
 │   │   ├── test_mode3_bias_asym.dsp       # K96 single-mode test
-│   │   ├── test_mode3_bias_asym_hybrid.dsp # Hybrid 50/50 test (not recommended)
 │   │   ├── test_var_subst_lut.dsp         # Variable substep LUT test
 │   │   ├── ja_lut_k*.lib                  # LUTs for test builds
 │   │   └── test_old/                      # Archived tests

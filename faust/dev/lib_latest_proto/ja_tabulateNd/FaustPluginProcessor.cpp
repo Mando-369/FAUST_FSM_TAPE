@@ -109223,7 +109223,7 @@ struct mydsp : public base_dsp {
 			fRec10[0] = fSlow18 + fConst20 * fRec10[1];
 			double fTemp232 = fTemp231 * fRec9[0] * fRec10[0];
 			fVec0[0] = fTemp232;
-			fRec8[0] = fConst18 * (0.30902954325135906 * (fSlow16 * fTemp232 + fSlow19 * fVec0[1]) - fConst21 * fRec8[1]);
+			fRec8[0] = fConst18 * (0.2290867652767773 * (fSlow16 * fTemp232 + fSlow19 * fVec0[1]) - fConst21 * fRec8[1]);
 			fVec1[0] = fSlow21 * fRec8[0];
 			fRec7[0] = -(fConst16 * (fConst17 * fRec7[1] - (fSlow14 * fRec8[0] + fSlow20 * fVec1[1])));
 			fVec2[0] = fSlow23 * fRec7[0];
@@ -110217,7 +110217,7 @@ struct mydsp : public base_dsp {
 			double fTemp1438 = static_cast<double>(input1[i0]);
 			double fTemp1439 = fTemp1438 * fRec9[0] * fRec10[0];
 			fVec3[0] = fTemp1439;
-			fRec20[0] = fConst18 * (0.30902954325135906 * (fSlow16 * fTemp1439 + fSlow19 * fVec3[1]) - fConst21 * fRec20[1]);
+			fRec20[0] = fConst18 * (0.2290867652767773 * (fSlow16 * fTemp1439 + fSlow19 * fVec3[1]) - fConst21 * fRec20[1]);
 			fVec4[0] = fSlow21 * fRec20[0];
 			fRec19[0] = -(fConst16 * (fConst17 * fRec19[1] - (fSlow14 * fRec20[0] + fSlow20 * fVec4[1])));
 			fVec5[0] = fSlow23 * fRec19[0];
