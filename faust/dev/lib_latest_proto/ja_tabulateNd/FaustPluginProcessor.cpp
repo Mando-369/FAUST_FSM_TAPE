@@ -109639,7 +109639,7 @@ struct mydsp : public base_dsp {
 		ui_interface->addVerticalSlider("Output", &fVslider5, FAUSTFLOAT(0.0), FAUSTFLOAT(-24.0), FAUSTFLOAT(24.0), FAUSTFLOAT(0.1));
 		ui_interface->declare(&fVslider4, "2", "");
 		ui_interface->declare(&fVslider4, "dB", "");
-		ui_interface->addVerticalSlider("Drive", &fVslider4, FAUSTFLOAT(0.0), FAUSTFLOAT(-3e+01), FAUSTFLOAT(3e+01), FAUSTFLOAT(0.1));
+		ui_interface->addVerticalSlider("Drive", &fVslider4, FAUSTFLOAT(0.0), FAUSTFLOAT(-12.0), FAUSTFLOAT(5e+01), FAUSTFLOAT(0.1));
 		ui_interface->declare(&fVslider0, "3", "");
 		ui_interface->addVerticalSlider("Mix", &fVslider0, FAUSTFLOAT(1.0), FAUSTFLOAT(0.0), FAUSTFLOAT(1.0), FAUSTFLOAT(0.01));
 		ui_interface->closeBox();
@@ -111714,7 +111714,7 @@ struct mydsp : public base_dsp {
 	FAUST_ADDVERTICALSLIDER("JA TabulateNd/[00] BIAS/Level", fVslider1, 0.4, 0.1, 0.9, 0.01);
 	FAUST_ADDVERTICALSLIDER("JA TabulateNd/[01] GAIN/Input", fVslider3, 0.0, -24.0, 24.0, 0.1);
 	FAUST_ADDVERTICALSLIDER("JA TabulateNd/[01] GAIN/Output", fVslider5, 0.0, -24.0, 24.0, 0.1);
-	FAUST_ADDVERTICALSLIDER("JA TabulateNd/[01] GAIN/Drive", fVslider4, 0.0, -3e+01, 3e+01, 0.1);
+	FAUST_ADDVERTICALSLIDER("JA TabulateNd/[01] GAIN/Drive", fVslider4, 0.0, -12.0, 5e+01, 0.1);
 	FAUST_ADDVERTICALSLIDER("JA TabulateNd/[01] GAIN/Mix", fVslider0, 1.0, 0.0, 1.0, 0.01);
 	FAUST_ADDVERTICALSLIDER("JA TabulateNd/[02] TAPE/Lambda Tilt", fVslider2, 0.0, -0.1, 0.1, 0.001);
 
@@ -111722,7 +111722,7 @@ struct mydsp : public base_dsp {
 		p(VERTICALSLIDER, Level, "JA TabulateNd/[00] BIAS/Level", fVslider1, 0.4, 0.1, 0.9, 0.01) \
 		p(VERTICALSLIDER, Input, "JA TabulateNd/[01] GAIN/Input", fVslider3, 0.0, -24.0, 24.0, 0.1) \
 		p(VERTICALSLIDER, Output, "JA TabulateNd/[01] GAIN/Output", fVslider5, 0.0, -24.0, 24.0, 0.1) \
-		p(VERTICALSLIDER, Drive, "JA TabulateNd/[01] GAIN/Drive", fVslider4, 0.0, -3e+01, 3e+01, 0.1) \
+		p(VERTICALSLIDER, Drive, "JA TabulateNd/[01] GAIN/Drive", fVslider4, 0.0, -12.0, 5e+01, 0.1) \
 		p(VERTICALSLIDER, Mix, "JA TabulateNd/[01] GAIN/Mix", fVslider0, 1.0, 0.0, 1.0, 0.01) \
 		p(VERTICALSLIDER, Lambda_Tilt, "JA TabulateNd/[02] TAPE/Lambda Tilt", fVslider2, 0.0, -0.1, 0.1, 0.001) \
 

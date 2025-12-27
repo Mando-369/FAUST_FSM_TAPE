@@ -200,7 +200,7 @@ with {
   output_gain_db = hgroup("JA TabulateNd", hgroup("[01] GAIN",
     vslider("[1]Output [dB]", 0.0, -24.0, 24.0, 0.1)));
   drive_db = hgroup("JA TabulateNd", hgroup("[01] GAIN",
-    vslider("[2]Drive [dB]", 0.0, -30.0, 30.0, 0.1)));
+    vslider("[2]Drive [dB]", 0.0, -12.0, 50.0, 0.1)));
   mix = hgroup("JA TabulateNd", hgroup("[01] GAIN",
     vslider("[3]Mix", 1.0, 0.0, 1.0, 0.01)));
   // Lambda tilt: 0 = flat, +0.1 = HF boost (bright), -0.1 = HF cut (warm)
