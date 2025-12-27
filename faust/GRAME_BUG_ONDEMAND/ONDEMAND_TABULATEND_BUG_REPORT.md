@@ -1,186 +1,96 @@
-# Ondemand + ba.tabulateNd Bug Report
+# Ondemand + ba.tabulateNd - Investigation Report
 
-**Date**: 2025-12-26
+**Date**: 2025-12-27 (Updated)
 **Reporter**: Thomas Mandolini (OmegaDSP)
-**Faust Fork**: `master-dev-ocpp-od-fir-2-FIR15` (also tested FIR13 - same result)
+**Faust Fork**: `master-dev-ocpp-od-fir-2-FIR15`
 **Repository**: https://github.com/Mando-369/FAUST_FSM_TAPE
 
 ---
 
 ## Summary
 
-`ondemand` does **not gate** `ba.tabulateNd` LUT lookups when using runtime clock signals. All branches compute regardless of clock state, resulting in CPU = N × single_branch_cost instead of expected single_branch_cost.
+**RESOLVED**: The perceived 3x CPU difference was NOT an ondemand bug, but a **compiler difference** between official FAUST and the ondemand fork.
 
-This is different from the previous bug (runtime clock + complex seq = invalid C++). Here the code compiles and runs, but ondemand simply doesn't reduce CPU.
-
----
-
-## Environment
-
-- **macOS**: Darwin 24.6.0 (M4 Max)
-- **Faust fork**: `tools/faust-ondemand/` (master-dev-ocpp-od-fir-2-FIR13)
-- **Compile flags**: `-double -t 600`
-- **Target**: JUCE AU plugin via `faust2juce`
-- **DAW**: Reaper
+When both plugins are built with the same compiler (ondemand fork), they show **1:1 CPU ratio**, confirming ondemand works correctly with `ba.tabulateNd`.
 
 ---
 
-## Files
+## Original Issue
 
-**Primary reproduction** (recommended - fast compile & load):
-
-| File | Description | CPU | Status |
-|------|-------------|-----|--------|
-| `ja_tabulateNd_3D_quality_modes.dsp` | 3 quality modes (K23/K45/K90) with 3D LUT | 1.5% | **Bug** - all compute |
-| `ja_tabulateNd_3D_quality_modes.sh` | Build script (~7s compile) | - | - |
-
-Expected: CPU varies by mode (K23 < K45 < K90)
-Actual: 1.5% constant regardless of mode selection
-
-**Secondary reproduction** (slower - 3 min compile, 60s load):
-
-| File | Description | CPU | Status |
-|------|-------------|-----|--------|
-| `ja_tabulateNd_4D_presets.dsp` | 4 machine presets with 4D LUT | 4.4% | **Bug** - all compute |
-| `ja_tabulateNd_4D_presets.sh` | Build script (~3 min compile) | - | - |
+Initial observation in Reaper (M4 Max):
+- `ja_tabulateNd.dsp` (single mode): 0.45% CPU
+- `ja_tabulateNd_3D_quality_modes.dsp` (3 modes): 1.2% CPU
+- Ratio: ~1:3 → suspected ondemand failure
 
 ---
 
-## Comparison with Working ondemand
+## Root Cause
 
-**Working**: `jahysteresislib_proto_OD_3_modes.dsp` (full physics, no tabulateNd)
+The single-mode plugin was built with **official FAUST** (`/opt/homebrew/bin/faust2juce`), while the 3-mode plugin was built with the **ondemand fork** (`tools/faust-ondemand`).
 
-```faust
-// Full physics inside ondemand - WORKS
-ja_hysteresis(H_in) =
-  sum(i, 3, clk(i) * (clk(i) : ondemand(loop(i, H_in))))
-with {
-  mode = int(quality_mode + 0.5);  // runtime clock
-  clk(i) = (mode == i);
-  loop(0, H) = loopK(H, ja_loop_k45, inv_45);  // ja_loop_k45 = seq(i, 45, ...)
-  loop(1, H) = loopK(H, ja_loop_k23, inv_23);
-  loop(2, H) = loopK(H, ja_loop_k11, inv_11);
-};
-```
-
-**Result**: CPU changes based on mode (K180=3.4%, K92=1.9%, K44=1.0%)
-
-**Failing**: `ja_tabulateNd_4D_presets.dsp` (tabulateNd LUTs)
-
-```faust
-// tabulateNd inside ondemand - FAILS TO GATE
-ja_hysteresis_presets(H_audio, bias, asym, preset) = output
-with {
-  clk(i) = (int(preset + 0.5) == i);  // same runtime clock pattern!
-
-  p0 = clk(0) : ondemand(cascade_a800(H_audio, bias, asym));
-  p1 = clk(1) : ondemand(cascade_a810(H_audio, bias, asym));
-  p2 = clk(2) : ondemand(cascade_atr(H_audio, bias, asym));
-  p3 = clk(3) : ondemand(cascade_mx(H_audio, bias, asym));
-
-  output = clk(0) * p0 + clk(1) * p1 + clk(2) * p2 + clk(3) * p3;
-};
-
-// Each cascade uses tabulateNd LUTs
-cascade_a800(H_audio, bias, asym) = (loop ~ _) : (!, _)
-with {
-  loop(M_prev) = M_end, M_avg with {
-    M1 = lut_m_end_a800(M_prev, H_audio, bias, asym);  // ba.tabulateNd
-    // ... 4 cascaded lookups
-  };
-};
-
-lut_m_end_a800(M, H, bias, asym) = ba.tabulateNd(1, ja_k90_m_end_a800,
-  (33, 65, 9, 5, -1, -40, 0.1, 0.0, 1, 40, 0.9, 0.4, M, H, bias, asym)).cub;
-```
-
-**Result**: CPU = 4.4% regardless of preset selection (all 4 compute)
+The ondemand fork produces ~2.7x slower code than official FAUST, which explains the CPU difference.
 
 ---
 
-## Analysis
+## Verification Tests
 
-| Pattern | Inside ondemand | Result |
-|---------|-----------------|--------|
-| Runtime clock | Full physics (`seq(i, N, ...)`) | **Works** |
-| Runtime clock | `ba.tabulateNd` LUT | **Fails to gate** |
-| Compile-time clock | Either | Works |
+### Test 1: Static Benchmark (faustbench)
 
-The key difference:
-- `seq(i, N, f)` generates inline computation that ondemand can gate
-- `ba.tabulateNd` generates `rdtable` lookups + interpolation that ondemand apparently cannot gate
+Both DSPs compiled with ondemand fork:
 
----
+**M4 Max Results:**
+| Test | MBytes/sec | CPU % | DSP Size |
+|------|------------|-------|----------|
+| ja_tabulateNd.dsp (single) | 15.6 | 4.75% | 328 |
+| ja_tabulateNd_3D_quality_modes.dsp (3-mode) | 16.3 | 4.62% | 352 |
 
-## Hypothesis
+**M1 Results:**
+| Test | MBytes/sec | CPU % | DSP Size |
+|------|------------|-------|----------|
+| ja_tabulateNd.dsp (single) | 10.45 | 6.58% | 328 |
+| ja_tabulateNd_3D_quality_modes.dsp (3-mode) | 10.32 | 6.66% | 352 |
 
-`ba.tabulateNd` generates code that includes:
-1. Table initialization (compile-time)
-2. Index calculation (runtime)
-3. `rdtable` reads (runtime)
-4. Interpolation math (runtime)
+**Ratio: ~1:1** → ondemand works in static benchmark
 
-The `ondemand` primitive may be failing to wrap steps 2-4 in the clock-gated conditional, causing all LUT lookups to execute regardless of clock state.
+### Test 2: Reaper with Same Compiler
 
-Alternatively, `rdtable` reads may be considered "side-effect-free" by the compiler and hoisted outside the clock-gated region as an optimization, defeating the purpose of ondemand.
+Both plugins rebuilt with ondemand fork:
 
----
+**M4 Max Reaper Results:**
+| Plugin | Format | Alone | With Other |
+|--------|--------|-------|------------|
+| ja_tabulateNd | AU | 1.2% | 0.8% |
+| ja_tabulateNd_3D_quality_modes | AU | 1.2% | 0.75% |
+| ja_tabulateNd | VST3 | 1.5% | 0.85% |
+| ja_tabulateNd_3D_quality_modes | VST3 | 1.5% | 0.79% |
 
-## Workaround
-
-Currently none that preserves both runtime preset selection AND tabulateNd performance.
-
-Options:
-1. Use full physics with ondemand (works, but higher CPU)
-2. Build separate plugins per preset (works, but no runtime switching)
-3. Accept all LUTs computing (4× expected CPU)
+**Ratio: 1:1** → ondemand works correctly
 
 ---
 
-## Confirmed: Bug Affects All tabulateNd Dimensions
+## Observations
 
-**Tested both 3D and 4D** - bug is NOT dimension-specific.
+1. **Mode switching behavior**: When changing K mode (K23/K45/K90), CPU drops for a couple seconds, then stabilizes. This confirms ondemand IS gating inactive branches.
 
-| Test | Dimensions | Expected CPU | Actual CPU | Result |
-|------|------------|--------------|------------|--------|
-| 4D presets (4 machines) | M×H×Bias×Asym | ~1.1% (active only) | 4.4% (all compute) | **BUG** |
-| 3D quality modes (K23/K45/K90) | M×H×Bias | Variable by mode | 1.5% (constant) | **BUG** |
+2. **CPU drops when both loaded**: When both plugins are loaded simultaneously, each shows lower CPU. Likely CPU frequency scaling or measurement artifact.
 
-The bug affects `ba.tabulateNd` regardless of dimensionality. Each mode's LUT computes even when its clock signal is 0.
+3. **VST3 overhead**: VST3 shows ~25% higher CPU than AU (1.5% vs 1.2%).
 
-**3D test file**: `faust/test/ja_tabulateNd_3D_quality_modes.dsp`
+4. **Fork performance**: The ondemand fork produces ~2.7x slower code than official FAUST. This is the overhead for ondemand support.
 
 ---
 
-## Questions for GRAME
+## Conclusion
 
-1. **Is this expected behavior?** Should `ondemand` work with `ba.tabulateNd` LUT lookups?
+**Ondemand works correctly with ba.tabulateNd.**
 
-2. **rdtable gating**: Does `ondemand` correctly gate `rdtable` reads, or are they hoisted outside the clock conditional?
-
-3. **Possible fix**: Could the ondemand code generator be modified to keep tabulateNd interpolation inside the gated block?
+The original "bug report" was based on comparing apples to oranges (different compilers). When both plugins are built with the ondemand fork, they show identical CPU usage, confirming proper branch gating.
 
 ---
 
-## Reproduction Steps
+## Benchmark Commands
 
-**Recommended** (fast - 7s compile, instant load):
-```bash
-cd /path/to/FAUST_FSM_TAPE/faust/GRAME_BUG_ONDEMAND
-./ja_tabulateNd_3D_quality_modes.sh
-
-# Load in DAW
-# Switch between K23 Eco / K45 Standard / K90 HQ
-# Observe: CPU stays at 1.5% (should vary by mode)
-```
-
-Alternative (slower - 3 min compile, 60s load):
-```bash
-cd /path/to/FAUST_FSM_TAPE/faust/GRAME_BUG_ONDEMAND
-./ja_tabulateNd_4D_presets.sh
-
-# Load in DAW, CPU = 4.4% regardless of preset selection
-```
+See `BENCHMARK_COMMANDS.md` for reproducible benchmark instructions.
 
 ---
 
