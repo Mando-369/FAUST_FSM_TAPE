@@ -4,7 +4,7 @@
               bundleIdentifier="com.grame.ja_tabulateNd" includeBinaryInAppConfig="1"
               buildVST="0" buildVST3="1" buildAU="1" buildAUv3="1" buildRTAS="0"
               buildAAX="0" buildStandalone="1" pluginName="ja_tabulateNd" pluginDesc="ja_tabulateNd"
-              pluginManufacturer="GRAME" pluginManufacturerCode="Manu" pluginCode="9ed4"
+              pluginManufacturer="GRAME" pluginManufacturerCode="Manu" pluginCode="13df"
               pluginChannelConfigs="" pluginIsSynth="0" pluginWantsMidiIn="0"
               pluginProducesMidiOut="0" pluginIsMidiEffectPlugin="0" pluginEditorRequiresKeys="0"
               pluginAUExportPrefix="ja_tabulateNdAU" pluginRTASCategory=""
